@@ -1,0 +1,2457 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0d1117">
+<title>에코 파크 (Echo Park)</title>
+<link rel="manifest" href="manifest.json">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{
+  width:100%;height:100%;
+  background:#0d1117;
+  overflow:hidden;
+}
+#game-container{
+  width:100vw;
+  height:100vh;
+}
+#game-container canvas{
+  display:block !important;
+}
+</style>
+</head>
+<body>
+<div id="game-container"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.60.0/phaser.min.js"></script>
+<script>
+'use strict';
+// ════════════════════════════════════════════════════════════
+//  CONSTANTS
+// ════════════════════════════════════════════════════════════
+const GW=960,GH=600,T=32;
+const C={
+  bg:0x0d1117,bg2:0x151b23,bg3:0x1c2330,
+  teal:0x2de8b0,teal2:0x1ab585,teal3:0x0d7a5a,
+  purple:0x7c5fe6,purple2:0xa78bfa,
+  amber:0xfbbf24,coral:0xf87171,
+  green:0x1d9e75,white:0xe8f4f0,
+  gray:0x8fa89e,dim:0x4d6b5e,line:0x1e3028,
+  pink:0xf9a8d4,
+};
+const H=(n)=>'#'+n.toString(16).padStart(6,'0');
+
+// ════════════════════════════════════════════════════════════
+//  SAVE SYSTEM
+// ════════════════════════════════════════════════════════════
+const SK='echoPark_v3';
+const SLOT_KEY='echoPark_slots_v3';
+function mkSave(){return{world:1,stage:1,stageStars:{},friendship:{luna:0,rico:0,moca:0,blaze:0,peach:0},friendshipLv:{luna:0,rico:0,moca:0,blaze:0,peach:0},selectedNpcs:['luna','rico'],totalClears:0};}
+function ldSave(){try{return Object.assign(mkSave(),JSON.parse(localStorage.getItem(SK)||'{}'));}catch{return mkSave();}}
+function svSave(d){try{localStorage.setItem(SK,JSON.stringify(d));}catch{}}
+function addFP(sv,id,pts){
+  const prevLv=sv.friendshipLv[id]||0;
+  sv.friendship[id]=(sv.friendship[id]||0)+pts;
+  const fp=sv.friendship[id];
+  const thr=[0,300,1000,3000,6000];
+  let lv=0;for(let i=thr.length-1;i>=0;i--){if(fp>=thr[i]){lv=i;break;}}
+  sv.friendshipLv[id]=lv;
+  return lv>prevLv?lv:0;
+}
+// ── 수동 저장 슬롯 (3개) ──────────────────────────────────────
+function ldSlots(){
+  try{const r=JSON.parse(localStorage.getItem(SLOT_KEY)||'[]');
+    while(r.length<3)r.push(null);return r;}
+  catch{return[null,null,null];}
+}
+function svSlot(idx,data){
+  try{const slots=ldSlots();
+    slots[idx]=Object.assign({},data,{
+      savedAt:Date.now(),
+      savedAtStr:new Date().toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}),
+    });
+    localStorage.setItem(SLOT_KEY,JSON.stringify(slots));
+    return true;}
+  catch{return false;}
+}
+function clearSlot(idx){
+  try{const slots=ldSlots();slots[idx]=null;localStorage.setItem(SLOT_KEY,JSON.stringify(slots));}catch{}
+}
+function ldSlot(idx){
+  try{const slots=ldSlots();return slots[idx]||null;}catch{return null;}
+}
+
+// ════════════════════════════════════════════════════════════
+//  NPC DATA
+// ════════════════════════════════════════════════════════════
+const NDEFS={
+  luna: {name:'루나', color:C.purple2,speed:130,err:0.04,scanMs:1800,wait:true, type:'가이드형'},
+  rico: {name:'리코', color:C.teal,   speed:200,err:0.18,scanMs:400, wait:false,type:'돌격형'},
+  moca: {name:'모카', color:C.amber,  speed:105,err:0.02,scanMs:3200,wait:true, type:'분석형'},
+  blaze:{name:'블레이즈',color:C.coral,speed:260,err:0.12,scanMs:200, wait:false,type:'스피드형'},
+  peach:{name:'피치', color:C.pink,   speed:150,err:0.05,scanMs:1500,wait:true, type:'서포터형'},
+};
+const NL={
+  luna:{
+    s:['같이 해보자! 😊','저 버튼 내가 맡을게!','힘내 💡','에코 쓰면 될 것 같아!','우리 팀이라면 가능해 ✨'],
+    c:['해냈다!! 🎉','역시 우리야!','완벽 ✅','예상했어! 우리라면 👌','정말 잘했어!! 😊'],
+    f:['다시 해보자!','타이밍이 달랐어.','다음엔 잘할게!','괜찮아, 다시 하면 돼!','이번엔 내가 더 잘할게 💪'],
+    i:['밥 먹으러 갔어? 😂','저쪽 버튼이 중요해 💡','기다릴게!','에코 써봐! 도움될 거야','버튼까지 가는 길 있어?'],
+  },
+  rico:{
+    s:['빠르게 끝낼게 💨','나 먼저 간다!','내가 다 할게!','속도전 시작!! 🔥','기다려, 금방이야!'],
+    c:['봤지?! 🔥','나 없었으면 못깼음 ㅋ','예스!!! 💪','최고속도 달성!! 🏁','역시 나야~!! 😎'],
+    f:['아 내 탓이다 😅','다시 가자!','한번 더!!','이번엔 더 빠르게!!','실수했어... 다시!'],
+    i:['자고 있어? ㅋㅋ','나 먼저 탐색할게!','빨리빨리!!','여기 뭔가 있는데...','움직여야 하는데 ㅎ'],
+  },
+  moca:{
+    s:['최적 경로 완료 📊','타이밍 내가 줄게 👌','집중.','변수 계산 완료.','3, 2, 1에 맞춰.'],
+    c:['예상 범위 내 ✅','정확했어.','완벽한 실행.','효율 최대화 달성.','데이터 일치. 성공.'],
+    f:['재시도.','오차 발생.','다음엔 됨.','타이밍 수정 필요.','분석 후 재도전.'],
+    i:['대기 중...','신호 준비됨.','언제든 말해.','최적 타이밍 계산 중...','패턴 분석 중 🔍'],
+  },
+  blaze:{
+    s:['빠르게!! ⚡','내가 다 할게!','Go Go Go!!','달려야 제맛!! 🔥','늦게 하면 안 돼!'],
+    c:['역시 나야 🏆','빨랐지?!','최고기록!!','전광석화 클리어!! ⚡','스피드런 성공!!'],
+    f:['아 아깝다 😬','다시!!','Go Go!','더 빠르게 할게!!','이번엔 진짜야!'],
+    i:['왜 이렇게 느려 💨','빠르게 가자!','GO!!','달리고 싶어!!','지금 바로 출발!'],
+  },
+  peach:{
+    s:['같이 잘해보자! 💕','도와줄게 🌸','파이팅!','항상 응원할게! ✨','걱정 마, 같이야!'],
+    c:['드디어!! ✨','우리 팀 최고 💕','감동이야!','정말 잘했어!! 🌸','해냈어!! 행복해 💖'],
+    f:['괜찮아... 😢','힘내!','다시 도전 🌸','실망하지 마! 다시!','내가 더 잘할게 💪'],
+    i:['여기야! 💕','도울 거 있어?','같이 하자!','이쪽은 어때? 👀','항상 곁에 있을게 🌸'],
+  },
+};
+function rLine(id,t){const a=(NL[id]||NL.luna)[t]||(NL[id]||NL.luna).s;return a[Math.floor(Math.random()*a.length)];}
+
+// ════════════════════════════════════════════════════════════
+//  SOUND & MUSIC SYSTEM
+// ════════════════════════════════════════════════════════════
+const SND={
+  ctx:null, vol:0.6, muted:false,
+  _rain:null, _rainGain:null,
+  _bgmActive:false, _bgmMaster:null, _bgmTimer:null, _bgmStep:0,
+
+  init(){
+    if(this.ctx)return;
+    try{ this.ctx=new(window.AudioContext||window.webkitAudioContext)(); }catch{}
+  },
+
+  startBGM(){
+    if(!this.ctx||this._bgmActive||this.muted)return;
+    this._bgmActive=true;
+    try{
+      const master=this.ctx.createGain();
+      master.gain.setValueAtTime(0,this.ctx.currentTime);
+      master.gain.linearRampToValueAtTime(this.vol*0.08, this.ctx.currentTime+4);
+      master.connect(this.ctx.destination);
+      this._bgmMaster=master;
+    }catch{this._bgmActive=false;return;}
+    const chords=[
+      {bass:110,notes:[220,261,330]},
+      {bass:87, notes:[174,220,261]},
+      {bass:131,notes:[261,330,392]},
+      {bass:98, notes:[196,247,294]},
+    ];
+    const melodies=[
+      [440,494,523,440],[392,349,330,392],[523,494,440,523],[392,330,294,330],
+    ];
+    const playStep=()=>{
+      if(!this._bgmActive||this.muted||!this._bgmMaster)return;
+      const m=this._bgmMaster;
+      const ch=chords[this._bgmStep%chords.length];
+      const mel=melodies[this._bgmStep%melodies.length];
+      const t=this.ctx.currentTime; const dur=4.5;
+      try{
+        const ob=this.ctx.createOscillator(); const gb=this.ctx.createGain();
+        ob.type='sine'; ob.frequency.value=ch.bass;
+        gb.gain.setValueAtTime(0,t); gb.gain.linearRampToValueAtTime(0.22,t+0.5);
+        gb.gain.linearRampToValueAtTime(0.18,t+dur-0.5); gb.gain.linearRampToValueAtTime(0,t+dur);
+        ob.connect(gb); gb.connect(m); ob.start(t); ob.stop(t+dur+0.1);
+      }catch{}
+      ch.notes.forEach((freq,i)=>{
+        try{
+          const o=this.ctx.createOscillator(); const g=this.ctx.createGain();
+          o.type='sine'; o.frequency.value=freq;
+          const v=0.10-i*0.025;
+          g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(v,t+1.2);
+          g.gain.linearRampToValueAtTime(v*0.7,t+dur-1); g.gain.linearRampToValueAtTime(0,t+dur);
+          o.connect(g); g.connect(m); o.start(t); o.stop(t+dur+0.1);
+        }catch{}
+      });
+      mel.forEach((freq,i)=>{
+        const mt=t+1.5+i*(dur-1.5)/mel.length;
+        try{
+          const om=this.ctx.createOscillator(); const gm=this.ctx.createGain();
+          om.type='sine'; om.frequency.value=freq;
+          gm.gain.setValueAtTime(0,mt); gm.gain.linearRampToValueAtTime(0.06,mt+0.05);
+          gm.gain.exponentialRampToValueAtTime(0.001,mt+0.7);
+          om.connect(gm); gm.connect(m); om.start(mt); om.stop(mt+0.8);
+        }catch{}
+      });
+      this._bgmStep++;
+      this._bgmTimer=setTimeout(playStep,dur*1000);
+    };
+    playStep();
+  },
+
+  stopBGM(){
+    this._bgmActive=false;
+    if(this._bgmTimer){clearTimeout(this._bgmTimer);this._bgmTimer=null;}
+    if(this._bgmMaster){
+      try{
+        const now=this.ctx?this.ctx.currentTime:0;
+        this._bgmMaster.gain.setValueAtTime(this._bgmMaster.gain.value||0,now);
+        this._bgmMaster.gain.linearRampToValueAtTime(0,now+1.5);
+        const mm=this._bgmMaster; this._bgmMaster=null;
+        setTimeout(()=>{try{mm.disconnect();}catch{}},2000);
+      }catch{this._bgmMaster=null;}
+    }
+  },
+
+  startRain(){
+    if(!this.ctx||this._rain||this.muted)return;
+    // 비동기: WebGL 렌더러 블로킹 방지
+    setTimeout(()=>{
+      if(!this.ctx||this._rain)return;
+      try{
+        const SR=this.ctx.sampleRate, len=SR*1; // 1초 루프 (메모리 절약)
+        const buf=this.ctx.createBuffer(1,len,SR); // 모노
+        const d=buf.getChannelData(0);
+        let b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;
+        for(let i=0;i<len;i++){
+          const w=Math.random()*2-1;
+          b0=0.99886*b0+w*0.0555179; b1=0.99332*b1+w*0.0750759;
+          b2=0.96900*b2+w*0.1538520; b3=0.86650*b3+w*0.3104856;
+          b4=0.55000*b4+w*0.5329522; b5=-0.7616*b5-w*0.0168980;
+          d[i]=(b0+b1+b2+b3+b4+b5+b6+w*0.5362)*0.08; b6=w*0.115926;
+        }
+        const src=this.ctx.createBufferSource(); src.buffer=buf; src.loop=true;
+        const hp=this.ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=600;
+        const lp=this.ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=4800;
+        const g=this.ctx.createGain(); g.gain.value=this.vol*0.10;
+        src.connect(hp); hp.connect(lp); lp.connect(g); g.connect(this.ctx.destination);
+        src.start(); this._rain=src; this._rainGain=g;
+      }catch{}
+    },800);
+  },
+  stopRain(){try{if(this._rain){this._rain.stop();this._rain=null;this._rainGain=null;}}catch{}},
+
+  setVol(v){
+    this.vol=v;
+    if(this._rainGain) this._rainGain.gain.value=v*0.10;
+    if(this._bgmMaster) try{this._bgmMaster.gain.value=v*0.08;}catch{}
+  },
+
+  _tone(freqs,durs,vols){
+    if(this.muted||!this.ctx)return;
+    try{
+      freqs.forEach((freq,i)=>{
+        const o=this.ctx.createOscillator(),g=this.ctx.createGain();
+        o.connect(g); g.connect(this.ctx.destination);
+        o.type='sine'; o.frequency.value=freq;
+        const delay=durs.slice(0,i).reduce((a,b)=>a+b,0);
+        const dur=durs[i],vol=vols[i]*this.vol,now=this.ctx.currentTime;
+        g.gain.setValueAtTime(0,now+delay);
+        g.gain.linearRampToValueAtTime(vol,now+delay+0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001,now+delay+dur);
+        o.start(now+delay); o.stop(now+delay+dur+0.05);
+      });
+    }catch{}
+  },
+  btnPress(){  this._tone([880,1046],[0.06,0.1],[0.12,0.07]); },
+  btnRelease(){this._tone([440],[0.05],[0.05]); },
+  jump(){      this._tone([350,520],[0.04,0.08],[0.1,0.06]); },
+  echoStart(){ this._tone([440,550,660],[0.07,0.07,0.1],[0.1,0.1,0.08]); },
+  echoStop(){  this._tone([660,550,440],[0.07,0.07,0.1],[0.08,0.08,0.1]); },
+  clear(){     this._tone([523,659,784,1047],[0.1,0.1,0.1,0.2],[0.2,0.2,0.22,0.28]); },
+  star3(){     this._tone([523,659,784,1047,1319,1568],[0.08,0.08,0.08,0.08,0.1,0.25],[0.2,0.22,0.24,0.26,0.28,0.35]); },
+  reset(){     this._tone([220],[0.1],[0.12]); },
+  save(){      this._tone([660,880],[0.08,0.14],[0.1,0.14]); },
+  pause(){     this._tone([440],[0.08],[0.08]); },
+  resume(){    this._tone([550],[0.08],[0.08]); },
+  menuMove(){  this._tone([600],[0.04],[0.06]); },
+  chatMsg(){   this._tone([660,880],[0.05,0.08],[0.08,0.05]); },
+  boost(){     this._tone([300,500,700],[0.05,0.05,0.08],[0.15,0.12,0.1]); },
+  unlock(){    this._tone([784,988,1175,1568],[0.1,0.1,0.1,0.2],[0.25,0.25,0.28,0.35]); },
+};
+
+// ════════════════════════════════════════════════════════════
+//  PARTICLE SYSTEM
+// ════════════════════════════════════════════════════════════
+class Particles{
+  constructor(scene){this.sc=scene;this.pool=[];}
+  _get(){
+    let p=this.pool.find(p=>!p.active);
+    if(!p){p={gfx:this.sc.add.graphics().setDepth(18),active:false};this.pool.push(p);}
+    return p;
+  }
+  burst(x,y,color,count=8,spread=60){
+    for(let i=0;i<count;i++){
+      const p=this._get();
+      p.active=true;
+      const angle=(Math.PI*2/count)*i+(Math.random()-0.5)*0.4;
+      const spd=(Math.random()*0.5+0.5)*spread;
+      const vx=Math.cos(angle)*spd, vy=Math.sin(angle)*spd;
+      let t=0;const dur=500+Math.random()*300;
+      const r=3+Math.random()*4;
+      const tick=this.sc.time.addEvent({delay:16,repeat:Math.floor(dur/16),callback:()=>{
+        t+=16;const prog=t/dur;
+        p.gfx.clear();
+        if(prog<1){
+          // prog(0~1) * spread 거리로 위치 계산 — 이전 *16 스케일 버그 수정
+          const px=x+vx*prog, py=y+vy*prog+120*prog*prog;
+          p.gfx.fillStyle(color,1-prog);
+          p.gfx.fillCircle(px,py,r*(1-prog*0.5));
+        }else{p.gfx.clear();p.active=false;tick.remove();}
+      }});
+    }
+  }
+  clearBurst(x,y){
+    this.burst(x,y,C.teal,12,80);
+    this.burst(x,y,C.amber,8,100);
+    this.burst(x,y,C.purple2,6,60);
+  }
+  btnBurst(x,y){this.burst(x,y,C.teal,6,40);}
+}
+
+
+// tile: 0=air,1=solid,2=platform,3=button,4=exit,5=spike(danger)
+// 18 rows × 32px = 576px  (GH=600)
+const R0=[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1];
+const GND=[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1];
+
+// World themes
+const WORLD_THEME={
+  1:{name:'에코 숲',      color:C.teal3,  color2:C.teal2,  bg:0x061a0f},
+  2:{name:'기어 공장',    color:0x5a4a2e, color2:0xc8922a, bg:0x12100a},
+  3:{name:'에코 우주',    color:0x1a1050, color2:0x5040c0, bg:0x050510},
+};
+
+const STAGES={
+  // ═══════════════ WORLD 1: 에코 숲 ═══════════════
+  // 핵심 설계 원칙:
+  // - 출구(4)는 항상 row 16 (바닥 레벨) — 버튼 누른 뒤 걸어서 도달 가능
+  // - 버튼은 양쪽에 배치 — 에코나 NPC 필요
+  // - 플랫폼은 장식용 (점프 필요 없음)
+  '1-1':{name:'첫 만남',world:1,stage:1,tSec:60,
+    map:[
+      GND,R0,R0,R0,R0,R0,R0,R0,R0,R0,R0,R0,R0,R0,R0,R0,
+      [1,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0,4,1],
+      GND,
+    ],
+    ps:{x:5,y:16}, ns:{luna:{x:8,y:16},rico:{x:11,y:16}},
+    btns:[{tx:2,ty:16,id:'b0'},{tx:26,ty:16,id:'b1'}],
+    exits:[{tx:28,ty:16,id:'e0',req:['b0','b1']}],
+    ng:{luna:'b0',rico:'b1'},
+    intro:{n1:'버튼 2개를 동시에 눌러야 출구가 열려! 에코([E])로 혼자서도 할 수 있어 😊',n2:'버튼 2개! 한 명이 버튼 누르고 에코로 나머지 해결해봐 😊',n3:'버튼 2개! 역할 분담하면 금방이야. 에코도 활용해봐!'},
+  },
+  '1-2':{name:'에코 협력',world:1,stage:2,tSec:90,
+    map:[
+      GND,R0,R0,R0,R0,R0,R0,R0,
+      [1,0,0,2,2,2,2,2,0,0,0,0,0,0,0,2,2,2,2,2,0,0,0,0,0,0,0,0,0,1],
+      R0,R0,R0,R0,R0,R0,R0,
+      [1,0,3,0,0,0,0,0,3,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,0,4,0,1],
+      GND,
+    ],
+    ps:{x:5,y:16}, ns:{luna:{x:11,y:16}},
+    btns:[{tx:2,ty:16,id:'b0'},{tx:8,ty:16,id:'b1'},{tx:16,ty:16,id:'b2'}],
+    exits:[{tx:27,ty:16,id:'e0',req:['b0','b1','b2']}],
+    ng:{luna:'b2'},
+    intro:{n1:'버튼 3개! 에코 3개를 전부 써서 혼자 해결해봐. [E]키로 녹화!',n2:'버튼 3개! 에코 2개 + 동료 1명으로 딱 맞아. [E]키로 녹화 시작!',n3:'버튼 3개! 동료들이랑 나눠서 누르자. 에코도 써봐!'},
+  },
+  '1-3':{name:'그랜드 싱크',world:1,stage:3,tSec:120,
+    map:[
+      GND,R0,R0,R0,R0,R0,R0,R0,
+      [1,0,0,2,2,2,0,0,0,0,2,2,2,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,0,1],
+      R0,R0,R0,R0,R0,R0,R0,
+      [1,3,0,0,0,3,0,0,0,0,3,0,0,0,3,0,0,0,0,3,0,0,0,0,0,0,0,4,0,1],
+      GND,
+    ],
+    ps:{x:6,y:16}, ns:{luna:{x:9,y:16},rico:{x:13,y:16}},
+    btns:[{tx:1,ty:16,id:'b0'},{tx:5,ty:16,id:'b1'},{tx:10,ty:16,id:'b2'},{tx:14,ty:16,id:'b3'},{tx:19,ty:16,id:'b4'}],
+    exits:[{tx:27,ty:16,id:'e0',req:['b0','b1','b2','b3','b4']}],
+    ng:{luna:'b1',rico:'b4'},
+    intro:{n1:'버튼 5개! 에코 3개론 부족해... 동료가 필요해! 메뉴에서 NPC를 선택해봐.',n2:'버튼 5개! 에코 3개 + 동료 2명 = 딱 맞아. 타이밍에 맞춰 — 3, 2, 1!',n3:'버튼 5개! 에코 2개 + 동료 3명으로 여유있게 클리어!'},
+  },
+
+  // ═══════════════ WORLD 2: 기어 공장 ═══════════════
+  '2-1':{name:'공장 입구',world:2,stage:1,tSec:75,
+    map:[
+      GND,R0,R0,R0,R0,R0,R0,R0,
+      [1,0,0,2,2,2,2,2,0,0,0,0,0,0,0,2,2,2,2,2,0,0,0,0,0,0,0,0,0,1],
+      R0,R0,R0,R0,R0,R0,R0,
+      [1,0,3,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0,0,4,0,0,1],
+      GND,
+    ],
+    ps:{x:5,y:16}, ns:{luna:{x:8,y:16},moca:{x:14,y:16}},
+    btns:[{tx:2,ty:16,id:'b0'},{tx:9,ty:16,id:'b1'},{tx:21,ty:16,id:'b2'}],
+    exits:[{tx:26,ty:16,id:'e0',req:['b0','b1','b2']}],
+    ng:{luna:'b0',moca:'b1'},
+    intro:{n1:'공장이야. 버튼 3개 — 에코 3개로 전부 해결해봐!',n2:'공장이야. 버튼 3개 — 에코와 동료를 잘 배치해!',n3:'공장이야. 버튼 3개! 동료가 많으니 에코 아껴도 돼.'},
+  },
+  '2-2':{name:'컨베이어 시련',world:2,stage:2,tSec:100,
+    map:[
+      GND,R0,R0,R0,R0,R0,R0,R0,
+      [1,0,0,0,2,2,2,2,2,2,0,0,0,0,0,0,2,2,2,2,2,2,0,0,0,0,0,0,0,1],
+      R0,R0,R0,R0,R0,R0,R0,
+      [1,3,0,0,0,3,0,0,0,0,0,3,0,0,0,0,0,0,0,3,0,0,0,0,0,0,4,0,0,1],
+      GND,
+    ],
+    ps:{x:4,y:16}, ns:{rico:{x:8,y:16},blaze:{x:13,y:16}},
+    btns:[{tx:1,ty:16,id:'b0'},{tx:5,ty:16,id:'b1'},{tx:11,ty:16,id:'b2'},{tx:19,ty:16,id:'b3'}],
+    exits:[{tx:26,ty:16,id:'e0',req:['b0','b1','b2','b3']}],
+    ng:{rico:'b2',blaze:'b3'},
+    intro:{n1:'버튼 4개! 에코 3개 배치하고 나머지 하나 직접 달려가자 💨',n2:'버튼 4개! 에코 2개 + 동료 2명, 빠르게 배치하고 달려가자 💨',n3:'버튼 4개! 동료 3명이면 에코 1개만 써도 돼. 빠르게 가자 💨'},
+  },
+  '2-3':{name:'기어 마스터',world:2,stage:3,tSec:130,
+    map:[
+      GND,R0,R0,R0,R0,R0,R0,R0,
+      [1,0,2,2,2,0,0,0,0,2,2,2,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,0,0,1],
+      R0,R0,R0,R0,R0,R0,R0,
+      [1,3,0,0,0,3,0,0,0,0,3,0,0,0,3,0,0,0,0,3,0,0,0,3,0,0,4,0,0,1],
+      GND,
+    ],
+    ps:{x:6,y:16}, ns:{luna:{x:9,y:16},rico:{x:13,y:16},moca:{x:17,y:16}},
+    btns:[{tx:1,ty:16,id:'b0'},{tx:5,ty:16,id:'b1'},{tx:10,ty:16,id:'b2'},{tx:14,ty:16,id:'b3'},{tx:19,ty:16,id:'b4'},{tx:23,ty:16,id:'b5'}],
+    exits:[{tx:26,ty:16,id:'e0',req:['b0','b1','b2','b3','b4','b5']}],
+    ng:{luna:'b1',rico:'b4',moca:'b5'},
+    intro:{n1:'버튼 6개! 에코 3개만으론 힘들어... 동료를 더 데려와봐.',n2:'버튼 6개! 에코 3개 + 동료 2명... 하나 부족해. 잘 생각해봐!',n3:'버튼 6개. 에코 3개 + 동료 3명 전원 배치. 지금까지 배운 걸 다 써봐!'},
+  },
+
+  // ── 특별 스테이지: NPC 부스트 맵 ────────────────────────
+  // 높은 발판 위 버튼(ty:12) — 점프만으로는 불가, NPC 옆 [F]키 부스트 필요
+  // map 배열 인덱스: 0=GND, 1~9=R0(빈 공간), 10=높은발판, 11=빈행, 12=높은버튼행,
+  //                  13~15=R0, 16=바닥버튼+출구, 17=GND (총 18행)
+  '1-4':{name:'NPC 사다리',world:1,stage:4,tSec:90,
+    map:[
+      GND,R0,R0,R0,R0,R0,R0,R0,R0,R0,                                      // idx 0~9
+      [1,0,0,0,2,2,2,2,0,0,0,0,0,0,0,0,2,2,2,2,0,0,0,0,0,0,0,0,0,1],      // idx 10: 높은 발판
+      [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],      // idx 11: 빈 행
+      [1,0,0,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,1],      // idx 12: 높은 버튼 (ty:12)
+      R0,R0,R0,                                                               // idx 13~15
+      [1,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0,4,0,0,1],      // idx 16: 바닥 버튼+출구 (ty:16)
+      GND,                                                                    // idx 17
+    ],
+    ps:{x:5,y:16}, ns:{luna:{x:8,y:16},peach:{x:18,y:16}},
+    btns:[
+      {tx:4,ty:12,id:'bH0'}, {tx:19,ty:12,id:'bH1'}, // 높은 버튼 (NPC 부스트 필요)
+      {tx:2,ty:16,id:'b0'},  {tx:22,ty:16,id:'b1'},  // 바닥 버튼
+    ],
+    exits:[{tx:26,ty:16,id:'e0',req:['bH0','bH1','b0','b1']}],
+    ng:{luna:'b0',peach:'b1'},
+    intro:{n1:'높은 버튼은 점프로 못 닿아! 동료 옆에서 [F]키를 누르면 밀어줄게! 💕',n2:'높은 버튼! 동료 옆에서 [F]키로 부스트 받아봐. 팀워크야! 💕',n3:'높은 버튼! [F]키로 부스트! 동료들이랑 역할 나눠서 클리어해봐 💕'},
+  },
+};
+
+// ════════════════════════════════════════════════════════════
+//  ECHO RECORDER
+// ════════════════════════════════════════════════════════════
+class EchoRec{
+  constructor(){this.slots=[null,null,null];this.on=false;this.cur=-1;this.buf=[];this.MAX=360;this._lastOverwrite=-1;}
+  startRec(s){this.cur=s;this.on=true;this.buf=[];}
+  push(f){if(!this.on)return;this.buf.push({x:f.x,y:f.y});if(this.buf.length>=this.MAX)this.stop();}
+  stop(){if(!this.on)return this.cur;this.slots[this.cur]=this.buf.slice();this.on=false;const s=this.cur;this.buf=[];return s;}
+  has(i){return this.slots[i]&&this.slots[i].length>0;}
+  clear(i){this.slots[i]=null;}
+  clearAll(){this.slots=[null,null,null];this.on=false;this.buf=[];this.cur=-1;this._lastOverwrite=-1;}
+  freeSlot(){
+    for(let i=0;i<3;i++)if(!this.has(i))return i;
+    this._lastOverwrite=(this._lastOverwrite+1)%3;
+    return this._lastOverwrite;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  NPC ACTOR
+// ════════════════════════════════════════════════════════════
+// NPC states
+const NS={IDLE:0,PATROL:1,MOVE:2,WAIT:3,ACT:4,REACT:5};
+
+class NpcActor{
+  constructor(sc,id,sx,sy,goal){
+    this.sc=sc; this.id=id; this.goal=goal;
+    this._origGoal=goal; // 리셋 시 복원용 원본 목표 저장
+    this._spawnX=sx; this._spawnY=sy; // fallback 위치 복원용
+    this.def=NDEFS[id];
+    this.st=NS.PATROL; this.stT=0;
+    this.patrolDir=1; this.patrolTime=0;
+    this.pressing=false;
+    this.bubT=0; this.dlgCD=0; this.recent=[];
+
+    // Physics sprite
+    this.spr=sc.physics.add.sprite(sx,sy,'px');
+    this.spr.setVisible(false).setSize(22,28).setGravityY(500).setCollideWorldBounds(true);
+    this.spr.body.setMaxVelocity(this.def.speed,900);
+
+    this.gfx=sc.add.graphics().setDepth(8);
+    this.lbl=sc.add.text(sx,sy-32,this.def.name,{
+      fontSize:'10px',fontFamily:"'Nunito',sans-serif",
+      color:H(this.def.color),stroke:H(C.bg),strokeThickness:3,
+    }).setOrigin(0.5).setDepth(9);
+    this.bub=null;
+  }
+
+  say(msg){
+    if(this.recent.includes(msg))return;
+    this.recent.push(msg); if(this.recent.length>6)this.recent.shift();
+    if(this.bub){this.bub.destroy();this.bub=null;}
+    const{x,y}=this.spr;
+    this.bub=this.sc.add.text(x,y-50,msg,{
+      fontSize:'10px',fontFamily:"'Nunito',sans-serif",color:H(C.white),
+      backgroundColor:H(C.bg3),padding:{x:7,y:4},wordWrap:{width:175},
+      stroke:H(C.line),strokeThickness:2,
+    }).setOrigin(0.5).setDepth(12);
+    this.bubT=3500;
+  }
+
+  draw(){
+    const{x,y}=this.spr; const g=this.gfx; const col=this.def.color;
+    g.clear();
+    // Shadow
+    g.fillStyle(C.bg,0.25); g.fillEllipse(x,y+14,26,8);
+    // Body
+    g.fillStyle(col,1); g.fillRoundedRect(x-11,y-20,22,28,5);
+    // Eyes
+    g.fillStyle(C.bg,1); g.fillCircle(x-4,y-10,3); g.fillCircle(x+4,y-10,3);
+    g.fillStyle(0xffffff,1); g.fillCircle(x-3,y-11,1.4); g.fillCircle(x+5,y-11,1.4);
+    // Smile
+    g.lineStyle(2,C.bg,1);
+    g.beginPath(); g.arc(x,y-3,4.5,0.2,Math.PI-0.2,false); g.strokePath();
+    // Pressing indicator
+    if(this.pressing){ g.fillStyle(C.teal,1); g.fillCircle(x+12,-21+y,4); }
+    this.lbl.setPosition(x,y-34);
+    if(this.bub) this.bub.setPosition(x,y-54);
+  }
+
+  update(dt,goalObj){
+    this.stT+=dt; this.dlgCD-=dt;
+    if(this.bub){this.bubT-=dt; if(this.bubT<=0){this.bub.destroy();this.bub=null;}}
+
+    const spd=this.def.speed;
+    const onGround=this.spr.body.blocked.down;
+
+    switch(this.st){
+
+      // ── PATROL: always move, wander left/right ────────────
+      case NS.PATROL: {
+        this.patrolTime+=dt;
+        // Change direction every 2-4 seconds
+        const patrolDur = 2000 + (this.id==='blaze'?-800:0) + Math.sin(this.patrolTime*0.001)*1000;
+        if(this.stT >= patrolDur){
+          this.patrolDir *= -1;
+          this.stT=0;
+          // If has goal, switch to MOVE toward goal
+          if(goalObj && !this.pressing){
+            this.st=NS.MOVE; this.stT=0; break;
+          }
+        }
+        this.spr.setVelocityX(this.patrolDir * spd * 0.55);
+        // Jump over walls
+        if((this.spr.body.blocked.right||this.spr.body.blocked.left) && onGround)
+          this.spr.setVelocityY(-420);
+        // Idle dialogue
+        if(this.dlgCD<=0 && Math.random()<0.001){
+          this.say(rLine(this.id,'i')); this.dlgCD=8000;
+        }
+        break;
+      }
+
+      // ── MOVE: head toward goal button ────────────────────
+      case NS.MOVE: {
+        // Support __player__ temp target (come_here command)
+        const effectiveGoal = (this.goal==='__player__' && this._tempTarget) ? this._tempTarget : goalObj;
+        if(!effectiveGoal){ this.st=NS.PATROL; this.stT=0; break; }
+        const dx=effectiveGoal.wx - this.spr.x;
+        if(Math.abs(dx)<22){
+          this.spr.setVelocityX(0);
+          if(this.goal==='__player__'){ this.st=NS.PATROL; this.stT=0; }
+          else { this.st=NS.WAIT; this.stT=0; }
+        } else {
+          this.spr.setVelocityX(dx>0 ? spd : -spd);
+          if((this.spr.body.blocked.right||this.spr.body.blocked.left) && onGround)
+            this.spr.setVelocityY(-440);
+        }
+        break;
+      }
+
+      // ── WAIT: brief pause before pressing ────────────────
+      case NS.WAIT: {
+        this.spr.setVelocityX(0);
+        if(this.stT>400){ this.st=NS.ACT; this.stT=0; }
+        break;
+      }
+
+      // ── ACT: hold button, stay on it ────────────────────
+      case NS.ACT: {
+        this.spr.setVelocityX(0);
+        if(!this.pressing){
+          this.pressing=true;
+          if(this.sc.pressBtn) this.sc.pressBtn(this.goal,'npc_'+this.id);
+          if(this.dlgCD<=0){ this.say(rLine(this.id,'s')); this.dlgCD=6000; }
+        }
+        // Stay near button — drift correction
+        if(goalObj){
+          const dxBtn=goalObj.wx-this.spr.x;
+          if(Math.abs(dxBtn)>30) this.spr.setVelocityX(dxBtn>0?60:-60);
+        }
+        break;
+      }
+
+      // ── REACT: celebrate/react then patrol again ──────────
+      case NS.REACT: {
+        this.spr.setVelocityX(this.patrolDir*40);
+        if(this.stT>1500){ this.st=NS.PATROL; this.stT=0; }
+        break;
+      }
+
+      // unknown state — safe fallback
+      default: {
+        this.st=NS.PATROL; this.stT=0;
+        break;
+      }
+    }
+    this.draw();
+  }
+
+  onClear(){
+    this.st=NS.REACT; this.stT=0;
+    this.say(rLine(this.id,'c'));
+  }
+  onReset(){
+    this.pressing=false; this.st=NS.PATROL; this.stT=0; this.patrolTime=0;
+    this.say(rLine(this.id,'f'));
+  }
+  destroy(){
+    this.spr.destroy(); this.gfx.destroy(); this.lbl.destroy();
+    if(this.bub) this.bub.destroy();
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCENE: BOOT
+// ════════════════════════════════════════════════════════════
+class SBoot extends Phaser.Scene{
+  constructor(){super('Boot');}
+  preload(){
+    SND.init();
+    const g=this.make.graphics({add:false});
+    // 1×1 transparent — for sprites/NPCs/player (we set body size manually)
+    g.fillStyle(0xffffff,0); g.fillRect(0,0,1,1);
+    g.generateTexture('px',1,1);
+    // 32×32 solid — for ground tiles (body auto-matches)
+    g.clear(); g.fillStyle(0xffffff,1); g.fillRect(0,0,T,T);
+    g.generateTexture('tile_solid',T,T);
+    // 32×8 solid — for thin platforms
+    g.clear(); g.fillStyle(0xffffff,1); g.fillRect(0,0,T,8);
+    g.generateTexture('tile_plat',T,8);
+    g.destroy();
+  }
+  create(){this.scene.start('Menu');}
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCENE: MAIN MENU
+// ════════════════════════════════════════════════════════════
+class SMenu extends Phaser.Scene{
+  constructor(){super('Menu');}
+  create(){
+    // 오디오는 첫 클릭 이후에 시작 (브라우저 정책)
+    // SND는 버튼 클릭 시 자동 초기화됨
+    this.sv=ldSave();
+    const bg=this.add.graphics();
+    bg.fillStyle(C.bg,1);bg.fillRect(0,0,GW,GH);
+    this._stars();this._trees();
+    const glow=this.add.graphics();
+    glow.fillStyle(0x063b1e,0.35);glow.fillEllipse(GW/2,GH*0.72,GW*0.8,GH*0.45);
+
+    this.add.text(GW/2,GH*0.17,'에코 파크',{
+      fontSize:'58px',fontFamily:"'Nunito',sans-serif",
+      color:H(C.teal),stroke:H(C.teal3),strokeThickness:5,fontStyle:'bold',
+    }).setOrigin(0.5);
+    this.add.text(GW/2,GH*0.30,'E C H O   P A R K',{
+      fontSize:'14px',fontFamily:'monospace',color:H(C.gray),
+    }).setOrigin(0.5);
+    this.add.text(GW/2,GH*0.37,'1~4인 협력 퍼즐 플랫포머  ·  크로스플랫폼 PWA',{
+      fontSize:'11px',fontFamily:'monospace',color:H(C.dim),
+    }).setOrigin(0.5);
+
+    // NPC dots
+    Object.entries(NDEFS).forEach(([id,def],i)=>{
+      const x=GW/2+(i-2)*80,y=GH*0.52;
+      const lv=this.sv.friendshipLv[id]||0;
+      const dot=this.add.graphics();
+      dot.fillStyle(def.color,1);dot.fillCircle(0,0,20);
+      dot.fillStyle(C.bg,0.5);dot.fillCircle(0,0,20);
+      dot.fillStyle(def.color,1);dot.fillCircle(0,0,15);
+      dot.setPosition(x,y);
+      this.add.text(x,y,def.name.slice(0,2),{fontSize:'9px',fontFamily:"'Nunito',sans-serif",color:H(C.bg),fontStyle:'bold'}).setOrigin(0.5);
+      this.add.text(x,y+26,`Lv.${lv}`,{fontSize:'8px',fontFamily:'monospace',color:H(C.dim)}).setOrigin(0.5);
+      this.tweens.add({targets:dot,y:y-6,duration:1400+i*260,yoyo:true,repeat:-1,ease:'Sine.easeInOut'});
+    });
+
+    this._btn(GW/2,GH*0.685,'▶  플레이 시작',C.teal,0x0a2218,()=>{ SND.init(); SND.startBGM(); SND.startRain(); SND.menuMove(); this.scene.start('StageSelect'); });
+    this._btn(GW/2,GH*0.760,'📂  저장 불러오기',C.bg3,C.gray,()=>{ SND.init(); SND.menuMove(); this._showLoadSlots(); });
+    this._btn(GW/2,GH*0.835,'❓  플레이 방법',C.bg2,C.dim,()=>{ SND.init(); SND.menuMove(); this.scene.start('HowTo'); });
+    this._btn(GW/2,GH*0.905,'⚙  설정',C.bg2,C.dim,()=>{ SND.init(); SND.menuMove(); this.scene.start('Settings'); });
+    this.add.text(GW-8,GH-7,'에코 파크 v2.0',{fontSize:'8px',fontFamily:'monospace',color:H(C.line)}).setOrigin(1,1);
+  }
+  _stars(){for(let i=0;i<55;i++){const x=Math.random()*GW,y=Math.random()*GH*0.65,sz=Math.random()*1.8+0.4;const s=this.add.circle(x,y,sz,0xffffff,Math.random()*0.6+0.1);this.tweens.add({targets:s,alpha:Math.random()*0.12,duration:1200+Math.random()*2000,yoyo:true,repeat:-1,delay:Math.random()*2000});}}
+  _trees(){const g=this.add.graphics();[[55,80,48],[140,62,38],[220,98,58],[730,72,44],[820,90,54],[910,55,34]].forEach(([x,h,w])=>{g.fillStyle(C.teal3,0.85);g.fillTriangle(x,GH-h-20,x-w/2,GH-20,x+w/2,GH-20);g.fillStyle(0x152b1e,1);g.fillRect(x-4,GH-20,8,22);});g.fillStyle(C.bg,0.6);g.fillRect(0,GH-20,GW,20);}
+  _btn(x,y,txt,bg,col,cb){const b=this.add.text(x,y,txt,{fontSize:'15px',fontFamily:"'Nunito',sans-serif",color:H(col),backgroundColor:H(bg),padding:{x:32,y:11},fontStyle:'bold'}).setOrigin(0.5).setInteractive({cursor:'pointer'});b.on('pointerover',()=>b.setScale(1.06));b.on('pointerout',()=>b.setScale(1));b.on('pointerdown',()=>b.setScale(0.96));b.on('pointerup',()=>{b.setScale(1.06);cb();});return b;}
+  _toast(msg){const t=this.add.text(GW/2,GH-80,msg,{fontSize:'12px',fontFamily:"'Nunito',sans-serif",color:H(C.teal),backgroundColor:H(C.bg3),padding:{x:16,y:8}}).setOrigin(0.5).setDepth(99);this.tweens.add({targets:t,alpha:0,y:t.y-35,duration:2500,onComplete:()=>t.destroy()});}
+
+  _showLoadSlots(){
+    // Remove existing overlay if present
+    if(this._loadPanel){this._loadPanel.destroy();this._loadPanel=null;}
+    const slots=ldSlots();
+    const hasAny=slots.some(s=>s!==null);
+    const cx=GW/2,cy=GH/2;
+    this._loadPanel=this.add.container(0,0).setDepth(50);
+    const dim=this.add.rectangle(0,0,GW,GH,0x000000,0.75).setOrigin(0);
+    const panel=this.add.graphics();
+    panel.fillStyle(C.bg2,1);panel.fillRoundedRect(cx-220,cy-190,440,380,14);
+    panel.lineStyle(2,C.teal,1);panel.strokeRoundedRect(cx-220,cy-190,440,380,14);
+    const title=this.add.text(cx,cy-158,'저장 슬롯 불러오기',{fontSize:'20px',fontFamily:"'Nunito',sans-serif",color:H(C.teal),fontStyle:'bold'}).setOrigin(0.5);
+    const sub=this.add.text(cx,cy-128,hasAny?'불러올 슬롯을 선택하세요.':'저장된 데이터가 없습니다.',{fontSize:'11px',fontFamily:'monospace',color:H(C.dim)}).setOrigin(0.5);
+
+    const items=slots.map((sl,i)=>{
+      const y=cy-78+i*86;
+      const isEmpty=!sl;
+      const sbg=this.add.graphics();
+      const draw=(hv)=>{sbg.clear();sbg.fillStyle(hv&&!isEmpty?C.teal3:C.bg3,1);sbg.fillRoundedRect(cx-170,y-26,340,60,8);sbg.lineStyle(hv&&!isEmpty?1.5:0.5,hv&&!isEmpty?C.teal:C.line,1);sbg.strokeRoundedRect(cx-170,y-26,340,60,8);};
+      draw(false);
+      const sn=this.add.text(cx-154,y-14,`슬롯 ${i+1}`,{fontSize:'12px',fontFamily:'monospace',color:H(isEmpty?C.line:C.teal),fontStyle:'bold'});
+      const si=this.add.text(cx-154,y+6,
+        isEmpty?'— 비어있음 —':`스테이지 ${sl.currentStage||sl.world+'-'+sl.stage}  ·  클리어 ${sl.totalClears||0}회  ·  ${sl.savedAtStr||''}`,
+        {fontSize:'11px',fontFamily:'monospace',color:H(isEmpty?C.line:C.gray)});
+      const z=this.add.zone(cx,y,340,60).setInteractive({cursor:isEmpty?'default':'pointer'});
+      if(!isEmpty){
+        z.on('pointerover',()=>draw(true));z.on('pointerout',()=>draw(false));
+        z.on('pointerup',()=>{
+          // Load this slot into active save
+          const loaded=Object.assign(mkSave(),sl);
+          svSave(loaded);
+          if(this._loadPanel){this._loadPanel.destroy();this._loadPanel=null;}
+          // 저장된 세이브 데이터 복원 후 바로 Game 씬으로 진입
+          // CharSelect를 거치면 NPC를 다시 선택해야 하는 문제 해결
+          const savedSid=sl.currentStage||`${sl.world||1}-${sl.stage||1}`;
+          const targetSid=STAGES[savedSid]?savedSid:'1-1';
+          this.scene.start('Game',{sid:targetSid, restoredBtnState:sl.savedBtnState||null, restoredEchoSlots:sl.savedEchoSlots||null, restoredNpcStates:sl.savedNpcStates||null});
+        });
+        const delBtn=this.add.text(cx+154,y-14,'삭제',{fontSize:'9px',fontFamily:'monospace',color:H(C.coral)}).setOrigin(1,0).setInteractive({cursor:'pointer'});
+        delBtn.on('pointerup',()=>{clearSlot(i);this._showLoadSlots();});
+        return[sbg,sn,si,z,delBtn];
+      }
+      return[sbg,sn,si,z];
+    });
+
+    const closeBtn=this.add.text(cx,cy+158,'← 닫기',{fontSize:'13px',fontFamily:"'Nunito',sans-serif",color:H(C.gray),backgroundColor:H(C.bg2),padding:{x:22,y:8},fontStyle:'bold'}).setOrigin(0.5).setInteractive({cursor:'pointer'});
+    closeBtn.on('pointerup',()=>{if(this._loadPanel){this._loadPanel.destroy();this._loadPanel=null;}});
+
+    this._loadPanel.add([dim,panel,title,sub,closeBtn]);
+    items.forEach(arr=>this._loadPanel.add(arr));
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCENE: HOW TO PLAY
+// ════════════════════════════════════════════════════════════
+class SHowTo extends Phaser.Scene{
+  constructor(){super('HowTo');}
+  create(){
+    this.pg=0;
+    this.pages=[
+      {title:'기본 조작',lines:['🎮  PC 이동:  ← → 또는  A D 키','   점프:  ↑  또는  W  또는  SPACE','📱  모바일:  화면 왼쪽 ← ▶,  오른쪽 ↑','','🎯  목표: 버튼을 밟아 출구를 열고 통과!','   버튼 위에 서 있으면 계속 눌린 상태','🚪  출구는 모든 버튼이 동시에 눌려야 열림']},
+      {title:'에코 시스템',lines:['📹  [E] 키  →  에코 녹화 시작','   다시 [E]  →  녹화 정지 & 재생 시작','','👻  에코 = 내 과거 행동이 반복되는 잔상','   에코가 버튼 위에 있으면 계속 눌린 상태!','','📦  에코 슬롯 3개  (E1 / E2 / E3 순으로 사용)','↺  [R] 키  →  전체 리셋 (에코·버튼·위치)']},
+      {title:'NPC 동료 & 대화',lines:['🟣  루나 (가이드형)  —  막히면 힌트 제공','🟢  리코 (돌격형)   —  빠르고 에너지 넘침','🟡  모카 (분석형)  —  정확한 타이밍 신호','🔴  블레이즈 (스피드)  —  가장 빠른 이동','🩷  피치 (서포터)   —  항상 응원해줌','','💬  [T] 키  →  NPC에게 말 걸기!','   버튼으로 이동 / 나한테 와 / 기다려 등']},
+      {title:'저장 & 일시정지',lines:['⏸   [ESC] 또는 [P]  →  일시 정지 메뉴','   계속하기 / 저장 / 처음부터 / 나가기','','💾  저장은 플레이어가 원할 때 직접!','   슬롯 3개 — 각기 다른 진행 상황 보관 가능','','🏠  "저장 후 나가기" — 슬롯1에 자동 저장 후 메뉴','🔓  6-15 퍼펙트 클리어 시 히든 월드 해제!']},
+    ];
+    this._draw();
+    this.input.keyboard.on('keydown-RIGHT',()=>this._next());
+    this.input.keyboard.on('keydown-LEFT', ()=>this._prev());
+    this.input.keyboard.on('keydown-SPACE',()=>this._next());
+    this.input.keyboard.on('keydown-ESC',  ()=>this.scene.start('Menu'));
+  }
+  _draw(){
+    this.children.removeAll(true);
+    const bg=this.add.graphics();
+    bg.fillStyle(C.bg,1);bg.fillRect(0,0,GW,GH);
+    bg.fillStyle(C.bg2,1);bg.fillRoundedRect(GW/2-310,55,620,490,14);
+    bg.lineStyle(1,C.teal3,0.7);bg.strokeRoundedRect(GW/2-310,55,620,490,14);
+    const p=this.pages[this.pg];
+    this.add.text(GW/2,94,`플레이 방법  —  ${p.title}`,{fontSize:'20px',fontFamily:"'Nunito',sans-serif",color:H(C.teal),fontStyle:'bold'}).setOrigin(0.5);
+    p.lines.forEach((l,i)=>this.add.text(GW/2-260,142+i*44,l,{fontSize:'14px',fontFamily:"'Nunito',sans-serif",color:H(C.white)}));
+    // Page dots
+    this.pages.forEach((_,i)=>{
+      const d=this.add.circle(GW/2+(i-1.5)*22,500,7,i===this.pg?C.teal:C.line);
+      d.setInteractive({cursor:'pointer'});d.on('pointerup',()=>{this.pg=i;this._draw();});
+    });
+    if(this.pg>0)this._btn(GW/2-120,535,'← 이전',C.bg3,C.gray,()=>this._prev());
+    if(this.pg<this.pages.length-1)this._btn(GW/2+90,535,'다음 →',C.teal3,C.teal,()=>this._next());
+    else this._btn(GW/2+90,535,'시작하기 →',C.teal,0x0a2218,()=>this.scene.start('CharSelect'));
+    this._btn(GW/2-280,535,'← 메뉴',C.bg2,C.dim,()=>this.scene.start('Menu'));
+    this.add.text(GW/2,558,`${this.pg+1} / ${this.pages.length}`,{fontSize:'10px',fontFamily:'monospace',color:H(C.dim)}).setOrigin(0.5);
+  }
+  _next(){if(this.pg<this.pages.length-1){this.pg++;this._draw();}}
+  _prev(){if(this.pg>0){this.pg--;this._draw();}}
+  _btn(x,y,txt,bg,col,cb){const b=this.add.text(x,y,txt,{fontSize:'13px',fontFamily:"'Nunito',sans-serif",color:H(col),backgroundColor:H(bg),padding:{x:18,y:9},fontStyle:'bold'}).setOrigin(0.5).setInteractive({cursor:'pointer'});b.on('pointerover',()=>b.setScale(1.05));b.on('pointerout',()=>b.setScale(1));b.on('pointerup',()=>cb());return b;}
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCENE: STAGE SELECT
+// ════════════════════════════════════════════════════════════
+class SStageSelect extends Phaser.Scene{
+  constructor(){super('StageSelect');}
+  create(){
+    this.sv=ldSave();
+    const bg=this.add.graphics();
+    bg.fillStyle(C.bg,1);bg.fillRect(0,0,GW,GH);
+
+    this.add.text(GW/2,34,'스테이지 선택',{fontSize:'22px',fontFamily:"'Nunito',sans-serif",color:H(C.teal),fontStyle:'bold'}).setOrigin(0.5);
+    this.add.text(GW/2,60,'클리어한 스테이지는 별점이 표시됩니다',{fontSize:'11px',fontFamily:'monospace',color:H(C.dim)}).setOrigin(0.5);
+
+    // Gather worlds
+    const worldIds=[...new Set(Object.values(STAGES).map(s=>s.world))].sort();
+    worldIds.forEach((wid,wi)=>{
+      const theme=WORLD_THEME[wid]||WORLD_THEME[1];
+      const wx=60, wy=100+wi*155;
+      // World header bar
+      const whBar=this.add.graphics();
+      whBar.fillStyle(theme.color,0.18);whBar.fillRoundedRect(wx-10,wy-8,GW-100,44,8);
+      whBar.lineStyle(1,theme.color,0.5);whBar.strokeRoundedRect(wx-10,wy-8,GW-100,44,8);
+      this.add.text(wx+4,wy+14,`W${wid}  ${theme.name}`,{fontSize:'14px',fontFamily:"'Nunito',sans-serif",color:H(theme.color2),fontStyle:'bold'}).setOrigin(0,0.5);
+
+      // Stage tiles
+      const stages=Object.entries(STAGES).filter(([,s])=>s.world===wid);
+      stages.forEach(([sid,sd],si)=>{
+        const tx=wx+si*145, ty=wy+66;
+        const stars=this.sv.stageStars[sid]||0;
+        const cleared=stars>0;
+        // Check if unlocked: stage 1 always unlocked, others need prev cleared
+        const stageNum=sd.stage;
+        const prevSid=`${wid}-${stageNum-1}`;
+        const unlocked=(stageNum===1)||(this.sv.stageStars[prevSid]>0);
+
+        const tg=this.add.graphics();
+        const drawTile=(hv)=>{
+          tg.clear();
+          if(!unlocked){tg.fillStyle(C.bg3,1);tg.fillRoundedRect(tx,ty,128,62,8);tg.lineStyle(0.5,C.line,1);tg.strokeRoundedRect(tx,ty,128,62,8);}
+          else{tg.fillStyle(hv?theme.color:C.bg2,hv?0.3:1);tg.fillRoundedRect(tx,ty,128,62,8);tg.lineStyle(hv?1.5:0.5,hv?theme.color2:C.line,1);tg.strokeRoundedRect(tx,ty,128,62,8);}
+        };
+        drawTile(false);
+
+        // Stage number badge
+        const badgeG=this.add.graphics();
+        badgeG.fillStyle(unlocked?theme.color:C.line,1);
+        badgeG.fillRoundedRect(tx+6,ty+6,28,22,5);
+        this.add.text(tx+20,ty+17,`${wid}-${sd.stage}`,{fontSize:'10px',fontFamily:'monospace',color:H(unlocked?C.bg:C.dim),fontStyle:'bold'}).setOrigin(0.5);
+
+        this.add.text(tx+42,ty+16,sd.name,{fontSize:'12px',fontFamily:"'Nunito',sans-serif",color:H(unlocked?C.white:C.line),fontStyle:'bold'});
+        this.add.text(tx+42,ty+32,unlocked?`목표 ${sd.tSec}초`:'🔒 잠김',{fontSize:'9px',fontFamily:'monospace',color:H(unlocked?C.dim:C.line)});
+
+        // Stars row
+        const starsRow=this.add.text(tx+8,ty+44,unlocked?[1,2,3].map(i=>i<=stars?'★':'☆').join(' '):'',{fontSize:'14px',fontFamily:'monospace',color:H(C.amber)});
+
+        if(unlocked){
+          const zone=this.add.zone(tx+64,ty+31,128,62).setInteractive({cursor:'pointer'});
+          zone.on('pointerover',()=>{drawTile(true);SND.menuMove();});
+          zone.on('pointerout', ()=>drawTile(false));
+          zone.on('pointerup',  ()=>{
+            SND.menuMove();
+            this.scene.start('CharSelect',{directSid:sid});
+          });
+        }
+      });
+    });
+
+    // World 3 — 준비중 잠금 미리보기
+    const w3Theme={name:'에코 우주',color:0x1a1050,color2:0x5040c0};
+    const w3y=100+Object.keys(WORLD_THEME).length*155;
+    const w3Bar=this.add.graphics();
+    w3Bar.fillStyle(0x0a0820,1);w3Bar.fillRoundedRect(50,w3y-8,GW-120,44,8);
+    w3Bar.lineStyle(0.5,0x2a1a60,0.6);w3Bar.strokeRoundedRect(50,w3y-8,GW-120,44,8);
+    this.add.text(66,w3y+14,'🔒  W3  에코 우주  —  월드 2 클리어 후 해금',{
+      fontSize:'13px',fontFamily:"'Nunito',sans-serif",color:'#2a1a60',fontStyle:'bold'
+    });
+    // 총 별점 표시
+    const totalStars=Object.values(this.sv.stageStars).reduce((a,b)=>a+b,0);
+    const maxStars=Object.keys(STAGES).length*3;
+    this.add.text(GW/2,GH-54,`총 별점: ${totalStars} / ${maxStars}  ⭐`,{
+      fontSize:'12px',fontFamily:'monospace',color:H(C.amber)
+    }).setOrigin(0.5);
+
+    // Back
+    this._btn(GW/2,GH-36,'← 메뉴로',C.bg2,C.gray,()=>{ SND.menuMove(); this.scene.start('Menu'); });
+    this.add.text(GW-8,GH-7,'별점 3개 = 목표시간 70% 이내',{fontSize:'8px',fontFamily:'monospace',color:H(C.line)}).setOrigin(1,1);
+  }
+  _btn(x,y,txt,bg,col,cb){const b=this.add.text(x,y,txt,{fontSize:'13px',fontFamily:"'Nunito',sans-serif",color:H(col),backgroundColor:H(bg),padding:{x:20,y:9},fontStyle:'bold'}).setOrigin(0.5).setInteractive({cursor:'pointer'});b.on('pointerover',()=>b.setScale(1.05));b.on('pointerout',()=>b.setScale(1));b.on('pointerup',()=>cb());return b;}
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCENE: SETTINGS
+// ════════════════════════════════════════════════════════════
+class SSettings extends Phaser.Scene{
+  constructor(){super('Settings');}
+  create(){
+    const bg=this.add.graphics();
+    bg.fillStyle(C.bg,1);bg.fillRect(0,0,GW,GH);
+    bg.fillStyle(C.bg2,1);bg.fillRoundedRect(GW/2-260,40,520,520,14);
+    bg.lineStyle(1,C.teal3,0.7);bg.strokeRoundedRect(GW/2-260,40,520,520,14);
+
+    this.add.text(GW/2,76,'설정',{fontSize:'22px',fontFamily:"'Nunito',sans-serif",color:H(C.teal),fontStyle:'bold'}).setOrigin(0.5);
+    const cx=GW/2;
+
+    // ── 볼륨 슬라이더 ────────────────────────────────────────
+    this.add.text(cx-220,125,'🔊  효과음 볼륨',{fontSize:'14px',fontFamily:"'Nunito',sans-serif",color:H(C.white)});
+    const volVal=this.add.text(cx+180,125,`${Math.round(SND.vol*100)}%`,{fontSize:'13px',fontFamily:'monospace',color:H(C.teal)}).setOrigin(1,0);
+
+    const sliderBg=this.add.graphics();sliderBg.fillStyle(C.bg3,1);sliderBg.fillRoundedRect(cx-220,155,440,10,5);
+    const sliderFg=this.add.graphics();
+    const drawSlider=()=>{sliderFg.clear();sliderFg.fillStyle(C.teal,1);sliderFg.fillRoundedRect(cx-220,155,440*SND.vol,10,5);};
+    drawSlider();
+
+    const sliderZone=this.add.zone(cx,160,440,24).setInteractive({cursor:'pointer'});
+    const knob=this.add.circle(cx-220+440*SND.vol,160,9,C.teal);
+    const updateVol=(p)=>{
+      SND.vol=Math.max(0,Math.min(1,(p.x-(cx-220))/440));
+      drawSlider();
+      volVal.setText(`${Math.round(SND.vol*100)}%`);
+      knob.setX(cx-220+440*SND.vol);
+      SND.setVol(SND.vol);
+    };
+    sliderZone.on('pointerdown',(p)=>updateVol(p));
+    sliderZone.on('pointermove',(p)=>{ if(p.isDown) updateVol(p); });
+
+    // ── 음소거 토글 ──────────────────────────────────────────
+    this.add.text(cx-220,200,'🔇  음소거',{fontSize:'14px',fontFamily:"'Nunito',sans-serif",color:H(C.white)});
+    const muteBtn=this.add.text(cx+180,200,SND.muted?'ON (음소거중)':'OFF',{fontSize:'13px',fontFamily:'monospace',color:H(SND.muted?C.coral:C.teal)}).setOrigin(1,0).setInteractive({cursor:'pointer'});
+    muteBtn.on('pointerup',()=>{
+      SND.muted=!SND.muted;
+      muteBtn.setText(SND.muted?'ON (음소거중)':'OFF').setColor(H(SND.muted?C.coral:C.teal));
+      if(!SND.muted){ SND.init(); SND.btnPress(); }
+    });
+
+    // ── 조작키 안내 ──────────────────────────────────────────
+    const ctrlY=255;
+    this.add.text(cx,ctrlY,'조작 키 안내',{fontSize:'14px',fontFamily:"'Nunito',sans-serif",color:H(C.teal),fontStyle:'bold'}).setOrigin(0.5);
+    bg.lineStyle(0.5,C.line,1);bg.moveTo(cx-220,ctrlY+22);bg.lineTo(cx+220,ctrlY+22);bg.strokePath();
+    const ctrl=[
+      ['이동','← → 또는  A  D'],
+      ['점프','↑  또는  W  또는  SPACE'],
+      ['에코 녹화/정지','E'],
+      ['리셋','R'],
+      ['일시정지','ESC  또는  P'],
+    ];
+    ctrl.forEach(([name,key],i)=>{
+      const y=ctrlY+38+i*36;
+      this.add.text(cx-210,y,name,{fontSize:'13px',fontFamily:"'Nunito',sans-serif",color:H(C.gray)});
+      const kbg=this.add.graphics();
+      kbg.fillStyle(C.bg3,1);kbg.fillRoundedRect(cx+40,y-5,160,26,6);
+      kbg.lineStyle(0.5,C.line,1);kbg.strokeRoundedRect(cx+40,y-5,160,26,6);
+      this.add.text(cx+120,y+8,key,{fontSize:'11px',fontFamily:'monospace',color:H(C.teal)}).setOrigin(0.5);
+    });
+
+    // ── 저장 데이터 초기화 ───────────────────────────────────
+    const resetY=520;
+    const resetBtn=this.add.text(cx,resetY,'⚠  전체 데이터 초기화',{fontSize:'12px',fontFamily:"'Nunito',sans-serif",color:H(C.coral),backgroundColor:H(0x1a0505),padding:{x:16,y:8}}).setOrigin(0.5).setInteractive({cursor:'pointer'});
+    resetBtn.on('pointerup',()=>{
+      if(this._resetConfirm){
+        localStorage.removeItem(SK);localStorage.removeItem(SLOT_KEY);
+        this._toast('모든 데이터가 초기화되었습니다.');
+        this.time.delayedCall(1500,()=>this.scene.start('Menu'));
+      }else{
+        this._resetConfirm=true;
+        resetBtn.setText('한 번 더 클릭하면 초기화됩니다!').setColor(H(C.amber));
+        this.time.delayedCall(3000,()=>{this._resetConfirm=false;resetBtn.setText('⚠  전체 데이터 초기화').setColor(H(C.coral));});
+      }
+    });
+
+    this._btn(cx,GH-36,'← 메뉴로',C.bg2,C.gray,()=>{ SND.menuMove(); this.scene.start('Menu'); });
+  }
+  _btn(x,y,txt,bg,col,cb){const b=this.add.text(x,y,txt,{fontSize:'13px',fontFamily:"'Nunito',sans-serif",color:H(col),backgroundColor:H(bg),padding:{x:20,y:9},fontStyle:'bold'}).setOrigin(0.5).setInteractive({cursor:'pointer'});b.on('pointerup',()=>cb());return b;}
+  _toast(msg){const t=this.add.text(GW/2,GH-80,msg,{fontSize:'12px',fontFamily:"'Nunito',sans-serif",color:H(C.teal),backgroundColor:H(C.bg3),padding:{x:16,y:8}}).setOrigin(0.5).setDepth(99);this.tweens.add({targets:t,alpha:0,y:t.y-30,duration:2200,onComplete:()=>t.destroy()});}
+}
+
+
+class SCharSelect extends Phaser.Scene{
+  constructor(){super('CharSelect');}
+  init(d){ this.directSid=(d&&d.directSid)||null; }
+  create(){
+    this.sv=ldSave();
+    this.sel=[...(this.sv.selectedNpcs||['luna'])];
+    this.cardData={};
+
+    const bg=this.add.graphics();
+    bg.fillStyle(C.bg,1);bg.fillRect(0,0,GW,GH);
+    this.add.text(GW/2,36,'동료 선택',{fontSize:'24px',fontFamily:"'Nunito',sans-serif",color:H(C.teal),fontStyle:'bold'}).setOrigin(0.5);
+    const startSid=this.directSid||'1-1';
+    const startSd=STAGES[startSid];
+    this.add.text(GW/2,64,`스테이지: W${startSd.world}-${startSd.stage} ${startSd.name}  ·  최대 3명 선택`,{fontSize:'11px',fontFamily:'monospace',color:H(C.dim)}).setOrigin(0.5);
+
+    this.detailT=this.add.text(GW/2,485,'',{fontSize:'12px',fontFamily:"'Nunito',sans-serif",color:H(C.gray),align:'center',wordWrap:{width:700}}).setOrigin(0.5);
+
+    Object.keys(NDEFS).forEach((id,i)=>this._card(id,76+i*178,250));
+
+    // Buttons
+    this._btn(GW/2+160,548,'▶  시작!',C.teal,0x0a2218,()=>{
+      SND.menuMove();
+      this.sv.selectedNpcs=this.sel;svSave(this.sv);
+      this.scene.start('Game',{sid:startSid});
+    });
+    this._btn(GW/2-200,548,'← 뒤로',C.bg2,C.gray,()=>{ SND.menuMove(); this.scene.start(this.directSid?'StageSelect':'Menu'); });
+    this._btn(GW/2-20,548,'❓ 방법',C.bg3,C.dim,()=>{ SND.menuMove(); this.scene.start('HowTo'); });
+
+  }
+
+  _card(id,x,y){
+    const def=NDEFS[id];const lv=this.sv.friendshipLv[id]||0;
+    // Card background gfx (redrawn on toggle)
+    const gfx=this.add.graphics();
+    this.cardData[id]={gfx,x,y,check:null};
+    this._drawCard(id);
+
+    // Avatar
+    const av=this.add.graphics();
+    av.fillStyle(def.color,1);av.fillCircle(x,y-52,26);
+    av.fillStyle(C.bg,0.5);av.fillCircle(x,y-52,26);
+    av.fillStyle(def.color,1);av.fillCircle(x,y-52,20);
+
+    this.add.text(x,y-14,def.name,{fontSize:'13px',fontFamily:"'Nunito',sans-serif",color:H(def.color),fontStyle:'bold'}).setOrigin(0.5);
+    this.add.text(x,y+6,def.type,{fontSize:'9px',fontFamily:'monospace',color:H(C.dim)}).setOrigin(0.5);
+    this.add.text(x,y+24,`우정 Lv.${lv}`,{fontSize:'9px',fontFamily:'monospace',color:H(def.color)}).setOrigin(0.5);
+
+    // Stat bars
+    [{l:'속도',v:Math.min(100,def.speed/2.6)},{l:'협력',v:def.wait?90:25},{l:'정확',v:(1-def.err)*100}].forEach((s,si)=>{
+      const sy=y+48+si*18;
+      this.add.text(x-60,sy,s.l,{fontSize:'8px',fontFamily:'monospace',color:H(C.dim)});
+      this.add.rectangle(x+14,sy+4,76,5,C.bg);
+      this.add.rectangle(x-24+s.v*0.76/2,sy+4,s.v*0.76,5,def.color);
+    });
+
+    // Hit zone
+    const z=this.add.zone(x,y,158,225).setInteractive({cursor:'pointer'});
+    z.on('pointerover',()=>this._detail(id));
+    z.on('pointerdown',()=>this._toggle(id));
+  }
+
+  _drawCard(id){
+    const{gfx,x,y,check}=this.cardData[id];
+    const def=NDEFS[id];const on=this.sel.includes(id);
+    gfx.clear();
+    gfx.fillStyle(on?def.color:C.bg3,on?0.12:1);
+    gfx.fillRoundedRect(x-72,y-86,144,200,10);
+    gfx.lineStyle(on?2:0.5,on?def.color:C.line,1);
+    gfx.strokeRoundedRect(x-72,y-86,144,200,10);
+    // Checkmark
+    if(this.cardData[id].check){this.cardData[id].check.destroy();this.cardData[id].check=null;}
+    if(on){
+      const ck=this.add.text(x+58,y-80,'✓',{fontSize:'13px',fontFamily:'monospace',color:H(def.color)}).setOrigin(0.5);
+      this.cardData[id].check=ck;
+    }
+  }
+
+  _toggle(id){
+    if(this.sel.includes(id))this.sel=this.sel.filter(s=>s!==id);
+    else{if(this.sel.length>=3){this._toast('최대 3명까지!');return;}this.sel.push(id);}
+    // Only redraw affected cards - no scene restart!
+    Object.keys(NDEFS).forEach(nid=>this._drawCard(nid));
+  }
+
+  _detail(id){
+    const def=NDEFS[id];const lv=this.sv.friendshipLv[id]||0;
+    const lvN=['처음 만남','아는 사이','친구','단짝','절친'];
+    this.detailT.setText(`${def.name} (${def.type})  |  우정: ${lvN[lv]}  |  속도 ${def.speed}  |  실수율 ${(def.err*100).toFixed(0)}%\n"${rLine(id,'s')}"`);
+  }
+
+  _btn(x,y,txt,bg,col,cb){
+    const b=this.add.text(x,y,txt,{fontSize:'13px',fontFamily:"'Nunito',sans-serif",color:H(col),backgroundColor:H(bg),padding:{x:16,y:8},fontStyle:'bold'}).setOrigin(0.5).setInteractive({cursor:'pointer'});
+    b.on('pointerover',()=>b.setScale(1.05));b.on('pointerout',()=>b.setScale(1));b.on('pointerdown',()=>b.setScale(0.95));b.on('pointerup',()=>{b.setScale(1);cb();});return b;
+  }
+  _toast(msg){const t=this.add.text(GW/2,GH-72,msg,{fontSize:'12px',fontFamily:"'Nunito',sans-serif",color:H(C.teal),backgroundColor:H(C.bg3),padding:{x:14,y:7}}).setOrigin(0.5).setDepth(99);this.tweens.add({targets:t,alpha:0,y:t.y-30,duration:2000,onComplete:()=>t.destroy()});}
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCENE: GAME
+// ════════════════════════════════════════════════════════════
+class SGame extends Phaser.Scene{
+  constructor(){super('Game');}
+
+  init(d){
+    this.sid=d.sid||'1-1';
+    this.sd=STAGES[this.sid];
+    this.sv=ldSave();
+    this.elapsed=0;this.cleared=false;this.paused=false;
+    // 저장된 버튼/에코/NPC 상태 복원 — 오직 명시적 불러오기 시에만
+    this._restoredBtnState=d.restoredBtnState||null;
+    this._restoredEchoSlots=d.restoredEchoSlots||null;
+    this._restoredNpcStates=d.restoredNpcStates||null;
+    this.btnState={};this.btnActive={};this.btnObjs={};this.exitObjs={};
+    this.npcs=[];
+    this.rec=new EchoRec();
+    this.ePBs=[];  // echo playbacks
+    this.pGfx=null;
+    this.idleT=0;this.hinted=false;
+    this.mob={left:false,right:false,jump:false};
+  }
+
+  create(){
+    this.events.on('shutdown', ()=>{ SND.stopRain(); SND.stopBGM(); });
+    // 오디오: 첫 입력 후 시작 (이미 초기화돼 있으면 바로 시작)
+    this.input.once('pointerdown',()=>{ SND.init(); SND.startRain(); SND.startBGM(); });
+    this.input.keyboard.once('keydown',()=>{ SND.init(); SND.startRain(); SND.startBGM(); });
+    this.physics.world.gravity.y=600;
+    const theme=WORLD_THEME[this.sd.world]||WORLD_THEME[1];
+
+    // Background
+    const bg=this.add.graphics();
+    bg.fillStyle(theme.bg||C.bg,1);bg.fillRect(0,0,GW,GH);
+    this._grid(theme);
+
+    // Particles
+    this.parts=new Particles(this);
+
+    this.gnd=this.physics.add.staticGroup();
+    this._map(this.sd.map, theme);
+
+    // Player
+    const ps=this.sd.ps;
+    this.player=this.physics.add.sprite(ps.x*T+T/2,ps.y*T+T/2,'px');
+    this.player.setSize(22,28).setGravityY(400).setCollideWorldBounds(true).setVisible(false);
+    // ★ FIX: Phaser 3 correct API - body.setMaxVelocity not sprite.setMaxVelocityX
+    this.player.body.setMaxVelocity(220,900);
+    this.physics.add.collider(this.player,this.gnd);
+    this.pGfx=this.add.graphics().setDepth(10);
+
+    // NPCs — always spawn all selected NPCs, using fallback positions if not defined in stage
+    const sel=this.sv.selectedNpcs||[];
+    const fallbackY = this.sd.ps.y;
+    const fallbackXs = [8,12,16,20,23];
+    let fallbackIdx = 0;
+    sel.forEach(id=>{
+      const sp=this.sd.ns[id] || {x: fallbackXs[fallbackIdx++ % fallbackXs.length], y: fallbackY};
+      const npc=new NpcActor(this,id,sp.x*T+T/2,sp.y*T+T/2,this.sd.ng[id]||null);
+      this.physics.add.collider(npc.spr,this.gnd);
+      this.time.delayedCall(600+Math.random()*1000,()=>npc.say(rLine(id,'s')));
+      this.npcs.push(npc);
+    });
+
+    // ★ NPC 자동 버튼 배정: ng에 없는 NPC에게 남은 버튼을 자동으로 할당
+    {
+      const allBtnIds = this.sd.btns.map(b=>b.id);
+      const assignedGoals = new Set(Object.values(this.sd.ng||{}));
+      // 아직 NPC가 배정되지 않은 버튼 중 바닥 레벨(ty>=15)만 자동 배정
+      // 공중 버튼(ty<15)은 플레이어가 직접 눌러야 하므로 제외
+      const freeBtns = allBtnIds.filter(id=>{
+        if(assignedGoals.has(id)) return false;
+        const btnDef = this.sd.btns.find(b=>b.id===id);
+        return btnDef && btnDef.ty >= 15;
+      });
+      let fi=0;
+      this.npcs.forEach(npc=>{
+        if(!npc.goal && fi<freeBtns.length){
+          npc.goal=freeBtns[fi++];
+          npc._origGoal=npc.goal; // 리셋 시 복원용
+          // 배정 시 약간의 딜레이로 자연스럽게 이동 시작
+          this.time.delayedCall(1200+fi*400,()=>{ if(npc.goal)npc.st=NS.MOVE; });
+        }
+      });
+    }
+
+    // Keys
+    this.keys=this.input.keyboard.addKeys({
+      L:Phaser.Input.Keyboard.KeyCodes.LEFT, R:Phaser.Input.Keyboard.KeyCodes.RIGHT,
+      U:Phaser.Input.Keyboard.KeyCodes.UP,
+      A:Phaser.Input.Keyboard.KeyCodes.A, D:Phaser.Input.Keyboard.KeyCodes.D,
+      W:Phaser.Input.Keyboard.KeyCodes.W,
+      SP:Phaser.Input.Keyboard.KeyCodes.SPACE,
+      E:Phaser.Input.Keyboard.KeyCodes.E,
+      RK:Phaser.Input.Keyboard.KeyCodes.R,
+      P:Phaser.Input.Keyboard.KeyCodes.P,
+    });
+    // ── 저장된 버튼/에코 상태 복원 (저장 불러오기 시에만) ────
+    if(this._restoredBtnState || this._restoredEchoSlots || this._restoredNpcStates){
+      const restoredBtn = this._restoredBtnState;
+      const restoredEcho = this._restoredEchoSlots;
+      const restoredNpc = this._restoredNpcStates;
+      this._restoredBtnState = null;
+      this._restoredEchoSlots = null;
+      this._restoredNpcStates = null;
+      this.time.delayedCall(150, ()=>{
+        // 버튼 복원
+        if(restoredBtn){
+          Object.entries(restoredBtn).forEach(([id, active])=>{
+            if(active && this.btnState[id]) this.pressBtn(id,'restore');
+          });
+        }
+        // 에코 슬롯 복원
+        if(restoredEcho){
+          restoredEcho.forEach((frames, i)=>{
+            if(frames && frames.length > 0) this.rec.slots[i]=frames.slice();
+          });
+          this.rec.slots.forEach((frames, i)=>{
+            if(frames && frames.length > 0){
+              const gfx=this.add.graphics().setDepth(7);
+              const lbl=this.add.text(frames[0].x,frames[0].y-32,`에코${i+1}`,
+                {fontSize:'9px',fontFamily:'monospace',color:H(C.purple2)}).setOrigin(0.5).setDepth(7);
+              this.ePBs.push({frames,fi:0,gfx,lbl,si:i,prevPress:{}});
+            }
+          });
+        }
+        // NPC 상태 복원 — ACT 상태였던 NPC는 즉시 버튼 위로 이동 후 누름 처리
+        if(restoredNpc){
+          restoredNpc.forEach(saved=>{
+            const npc=this.npcs.find(n=>n.id===saved.id);
+            if(!npc) return;
+            npc.goal=saved.goal||npc._origGoal||null;
+            if(saved.st===NS.ACT && saved.pressing && saved.goal){
+              // 버튼 위치로 즉시 텔레포트 후 ACT 상태로 복원
+              const btnObj=this.btnObjs[saved.goal];
+              if(btnObj){
+                npc.spr.setPosition(btnObj.wx, btnObj.wy);
+                npc.spr.setVelocity(0,0);
+              }
+              npc.st=NS.ACT; npc.stT=0; npc.pressing=true;
+              // pressBtn은 이미 restoredBtn에서 처리됨 — 중복 방지
+            } else if(saved.st===NS.ACT || saved.st===NS.WAIT){
+              // ACT였지만 pressing 아닌 경우 — MOVE로 빠르게 이동
+              npc.st=NS.MOVE; npc.stT=0;
+            } else {
+              npc.st=saved.st||NS.PATROL; npc.stT=0;
+            }
+          });
+        }
+      });
+    }
+
+    this.input.keyboard.on('keydown-E',  ()=>{ if(!this.paused)this._echoKey(); });
+    this.input.keyboard.on('keydown-R',  ()=>{ if(!this.paused)this.doReset(); });
+    this.input.keyboard.on('keydown-ESC',()=>this._togglePause());
+    this.input.keyboard.on('keydown-P',  ()=>this._togglePause());
+    this.input.keyboard.on('keydown-T',  ()=>{ if(!this.paused)this._openTalk(); });
+    this.input.keyboard.on('keydown-F',  ()=>{ if(!this.paused)this._npcBoost(); });
+
+    // ── 포커스 없어도 키 동작하도록 document 레벨 fallback ──
+    // 캔버스에 포커스가 없을 때 Phaser 키 이벤트가 안 잡히는 문제 보완
+    this._docKeyFn=(e)=>{
+      // DOM input(채팅 입력창)에 포커스 중이면 게임 키 무시
+      if(document.activeElement&&document.activeElement.tagName==='INPUT')return;
+      const cv=this.sys.game.canvas;
+      // 이미 캔버스에 포커스 있으면 Phaser가 처리하므로 중복 방지
+      if(document.activeElement===cv)return;
+      switch(e.key){
+        case 't': case 'T': e.preventDefault(); if(!this.paused&&!this.cleared)this._openTalk(); break;
+        case 'e': case 'E': e.preventDefault(); if(!this.paused&&!this.cleared)this._echoKey(); break;
+        case 'r': case 'R': e.preventDefault(); if(!this.paused&&!this.cleared)this.doReset(); break;
+        case 'f': case 'F': e.preventDefault(); if(!this.paused&&!this.cleared)this._npcBoost(); break;
+        case 'p': case 'P': e.preventDefault(); if(!this.cleared)this._togglePause(); break;
+        case 'Escape':      e.preventDefault(); if(!this.cleared)this._togglePause(); break;
+      }
+    };
+    document.addEventListener('keydown',this._docKeyFn);
+    // 씬 종료 시 리스너 해제
+    this.events.once('shutdown',()=>{
+      if(this._docKeyFn){ document.removeEventListener('keydown',this._docKeyFn); this._docKeyFn=null; }
+    });
+
+    this._mobile();
+    // Launch HUD (parallel scene)
+    this.scene.launch('HUD',{g:this});
+    // Intro popup
+    if(this.sd.intro){
+      this.time.delayedCall(700,()=>{
+        const intro=this.sd.intro;
+        let txt='';
+        if(typeof intro==='string'){
+          // 구버전 문자열 형식 호환
+          txt=intro;
+        } else {
+          // NPC 수에 따라 다른 설명 선택
+          const npcCount=this.npcs.length;
+          const key=npcCount>=3?'n3':npcCount===2?'n2':'n1';
+          txt=intro[key]||intro.n1||'';
+          // 화자: 선택된 NPC 중 첫 번째 NPC의 이름
+          if(txt && this.npcs.length>0){
+            const speaker=NDEFS[this.npcs[0].id];
+            if(speaker) txt=`${speaker.name}: "${txt}"`;
+          } else if(txt){
+            txt=`루나: "${txt}"`;
+          }
+        }
+        if(txt) this._popup(txt);
+      });
+    }
+    // 1-1 특별 튜토리얼 — 첫 번째 스테이지면 키 힌트 표시
+    if(this.sid==='1-1'){
+      this.time.delayedCall(3000,()=>{
+        const g=this.add.graphics().setDepth(25);
+        const texts=[];
+        // 이동 힌트 (왼쪽 하단)
+        g.fillStyle(C.bg3,0.85);g.fillRoundedRect(30,GH-140,180,48,8);
+        g.lineStyle(1,C.teal3,0.6);g.strokeRoundedRect(30,GH-140,180,48,8);
+        texts.push(this.add.text(120,GH-116,'← → 이동  |  ↑ 점프',{fontSize:'11px',fontFamily:"'Nunito',sans-serif",color:H(C.teal)}).setOrigin(0.5).setDepth(26));
+        // 에코 힌트 (오른쪽)
+        g.fillStyle(C.bg3,0.85);g.fillRoundedRect(GW-220,GH-140,190,48,8);
+        g.lineStyle(1,C.purple2,0.6);g.strokeRoundedRect(GW-220,GH-140,190,48,8);
+        texts.push(this.add.text(GW-125,GH-116,'[E] 에코 녹화/정지',{fontSize:'11px',fontFamily:"'Nunito',sans-serif",color:H(C.purple2)}).setOrigin(0.5).setDepth(26));
+        // 5초 후 사라짐
+        this.time.delayedCall(5000,()=>{g.destroy();texts.forEach(t=>t.destroy());});
+      });
+    }
+  }
+
+  _grid(theme){
+    const g=this.add.graphics().setDepth(0).setAlpha(0.18);
+    const tc=theme?theme.color:C.teal3;
+    g.lineStyle(0.4,tc,0.5);
+    for(let x=0;x<GW;x+=T){g.moveTo(x,0);g.lineTo(x,GH);}
+    for(let y=0;y<GH;y+=T){g.moveTo(0,y);g.lineTo(GW,y);}
+    g.strokePath();
+  }
+
+  _map(map,theme){
+    const tc=theme?theme.color:C.teal3;
+    const tc2=theme?theme.color2:C.teal2;
+    // Store separate graphics layer for buttons/exits so they always render on top
+    this._mapGfx = this.add.graphics().setDepth(6);
+
+    map.forEach((row,ry)=>row.forEach((tile,rx)=>{
+      const wx=rx*T, wy=ry*T, cx=wx+T/2, cy=wy+T/2;
+      if(tile===1){
+        this.add.rectangle(cx,cy,T,T,tc).setDepth(2).setStrokeStyle(0.5,tc2,0.4);
+        const b=this.gnd.create(cx,cy,'tile_solid');
+        b.setVisible(false).refreshBody();
+      } else if(tile===2){
+        this.add.rectangle(cx,wy+4,T,8,tc2,0.95).setDepth(2);
+        const b=this.gnd.create(cx,wy+4,'tile_plat');
+        b.setVisible(false).refreshBody();
+      } else if(tile===3){
+        const bd=this.sd.btns.find(b=>b.tx===rx&&b.ty===ry);
+        if(bd){
+          this.btnState[bd.id]=new Set();
+          this.btnActive[bd.id]=false;
+          this.btnObjs[bd.id]={wx:cx, wy:cy-6, gfx:this.add.graphics().setDepth(6)};
+          this._dBtn(bd.id);
+          // Also add a permanent visual marker under the button
+          this.add.rectangle(cx,cy+6,T-4,6,tc2,0.5).setDepth(3);
+        }
+      } else if(tile===4){
+        const ed=this.sd.exits.find(e=>e.tx===rx&&e.ty===ry);
+        if(ed){
+          this.exitObjs[ed.id]={wx:cx, wy:cy, gfx:this.add.graphics().setDepth(6), open:false};
+          this._dExit(ed.id);
+        }
+      }
+    }));
+  }
+
+  _dBtn(id){
+    const o=this.btnObjs[id]; if(!o)return;
+    const on=this.btnActive[id];
+    const g=o.gfx; g.clear();
+    if(on){
+      // Active: bright teal glow + filled
+      g.fillStyle(C.teal,0.35); g.fillCircle(o.wx,o.wy,26);
+      g.fillStyle(C.teal,1);    g.fillCircle(o.wx,o.wy,16);
+      g.lineStyle(3,C.white,0.9); g.strokeCircle(o.wx,o.wy,16);
+      // Check mark
+      g.lineStyle(3,C.bg,1);
+      g.beginPath(); g.moveTo(o.wx-6,o.wy); g.lineTo(o.wx-2,o.wy+5); g.lineTo(o.wx+7,o.wy-5);
+      g.strokePath();
+    } else {
+      // Inactive: bright amber, clearly visible
+      g.fillStyle(C.amber,0.25); g.fillCircle(o.wx,o.wy,22);
+      g.fillStyle(C.amber,1);    g.fillCircle(o.wx,o.wy,15);
+      g.lineStyle(2.5,0xe8a800,1); g.strokeCircle(o.wx,o.wy,15);
+      // Inner dot
+      g.fillStyle(0x0d1117,0.7); g.fillCircle(o.wx,o.wy,7);
+      // Exclamation / press indicator
+      g.fillStyle(C.amber,1); g.fillRect(o.wx-2,o.wy-5,4,8);
+      g.fillCircle(o.wx,o.wy+5,2);
+    }
+  }
+
+  _dExit(id){
+    const o=this.exitObjs[id]; if(!o)return;
+    const open=o.open;
+    const g=o.gfx; g.clear();
+    if(open){
+      // Open: bright pulsing teal portal
+      g.fillStyle(C.teal,0.35); g.fillRoundedRect(o.wx-18,o.wy-18,36,36,7);
+      g.fillStyle(C.teal,0.8);  g.fillRoundedRect(o.wx-14,o.wy-14,28,28,5);
+      g.lineStyle(3,C.white,1); g.strokeRoundedRect(o.wx-14,o.wy-14,28,28,5);
+      // Up arrow
+      g.fillStyle(C.bg,1);
+      g.fillTriangle(o.wx,o.wy-8, o.wx-8,o.wy+6, o.wx+8,o.wy+6);
+    } else {
+      // Closed: visible gray lock
+      g.fillStyle(0x4a4a6a,0.4);  g.fillRoundedRect(o.wx-16,o.wy-16,32,32,6);
+      g.lineStyle(1.5,0x7070a0,0.8); g.strokeRoundedRect(o.wx-16,o.wy-16,32,32,6);
+      // Lock body
+      g.fillStyle(0x9090c0,0.9); g.fillRoundedRect(o.wx-8,o.wy-3,16,12,3);
+      // Lock shackle
+      g.lineStyle(2.5,0x9090c0,0.9);
+      g.beginPath(); g.arc(o.wx,o.wy-4,7,Math.PI,0,false); g.strokePath();
+    }
+  }
+
+  pressBtn(id,who){
+    if(!this.btnState[id])return;
+    const wasEmpty=this.btnState[id].size===0;
+    this.btnState[id].add(who);
+    this.btnActive[id]=true;
+    this._dBtn(id);
+    if(wasEmpty){
+      const isEcho=who.startsWith('e'); // echo keys: 'e0','e1','e2'
+      if(!isEcho){ SND.btnPress(); const o=this.btnObjs[id];if(o&&this.parts)this.parts.btnBurst(o.wx,o.wy); }
+      else{ const o=this.btnObjs[id];if(o&&this.parts)this.parts.burst(o.wx,o.wy,C.purple2,3,22); }
+    }
+    this._chkExits();
+  }
+  releaseBtn(id,who){
+    if(!this.btnState[id])return;
+    this.btnState[id].delete(who);
+    if(this.btnState[id].size===0){
+      this.btnActive[id]=false;
+      this._dBtn(id);
+      // Only human releases make sound (not echo oscillation)
+      if(who==='p') SND.btnRelease();
+      this._chkExits();
+    }
+  }
+
+  _chkExits(){
+    this.sd.exits.forEach(ed=>{
+      const allOn=ed.req.every(bid=>this.btnActive[bid]);
+      const o=this.exitObjs[ed.id];if(!o)return;
+      if(allOn!==o.open){
+        o.open=allOn;
+        this._dExit(ed.id);
+        // 출구 열릴 때 강조 알림
+        if(allOn){
+          this._toast('🚪 출구가 열렸어요! 오른쪽으로 이동하세요 →');
+          SND.unlock();
+          this.npcs.forEach(npc=>npc.say('출구 열렸어!! 어서 가! 🚪'));
+        }
+      }
+    });
+  }
+
+  _echoKey(){
+    if(this.rec.on){
+      SND.echoStop();
+      const slot=this.rec.stop();
+      const frames=this.rec.slots[slot];
+      if(frames&&frames.length>2){
+        this.ePBs=this.ePBs.filter(p=>{if(p.si===slot){p.gfx.destroy();if(p.lbl)p.lbl.destroy();return false;}return true;});
+        const gfx=this.add.graphics().setDepth(7);
+        const lbl=this.add.text(frames[0].x,frames[0].y-32,`에코${slot+1}`,{fontSize:'9px',fontFamily:'monospace',color:H(C.purple2)}).setOrigin(0.5).setDepth(7);
+        this.ePBs.push({frames,fi:0,gfx,lbl,si:slot,prevPress:{}});
+        this._toast(`에코${slot+1} 녹화 완료!`);
+      }else{this._toast('너무 짧아요! 더 길게 녹화해보세요.');}
+    }else{
+      SND.echoStart();
+      const slot=this.rec.freeSlot();
+      if(this.rec.has(slot)){
+        this.ePBs=this.ePBs.filter(p=>{if(p.si===slot){p.gfx.destroy();if(p.lbl)p.lbl.destroy();return false;}return true;});
+        this.rec.clear(slot);
+      }
+      this.rec.startRec(slot);
+      this._toast(`에코${slot+1} 녹화 시작! 다시 [E]로 정지`);
+    }
+  }
+
+  doReset(){
+    SND.reset();
+    Object.keys(this.btnState).forEach(id=>{this.btnState[id]=new Set();this.btnActive[id]=false;this._dBtn(id);});
+    Object.keys(this.exitObjs).forEach(id=>{this.exitObjs[id].open=false;this._dExit(id);});
+    this.ePBs.forEach(p=>{p.gfx.destroy();if(p.lbl)p.lbl.destroy();});this.ePBs=[];
+    this.rec.clearAll();
+    const ps=this.sd.ps;
+    this.player.setPosition(ps.x*T+T/2,ps.y*T+T/2).setVelocity(0,0);
+    this.npcs.forEach((npc,idx)=>{
+      // sd.ns에 정의된 위치 우선, 없으면 스폰 시 사용한 fallback 좌표 복원
+      const sp=this.sd.ns[npc.id];
+      if(sp){
+        npc.spr.setPosition(sp.x*T+T/2,sp.y*T+T/2).setVelocity(0,0);
+      } else if(npc._spawnX!==undefined){
+        npc.spr.setPosition(npc._spawnX,npc._spawnY).setVelocity(0,0);
+      }
+      npc.goal=npc._origGoal||null;
+      npc.onReset();
+    });
+    // 자동 배정 NPC 중 _origGoal이 없는 경우 재배정 (혹시 모를 방어 코드)
+    {
+      const allBtnIds=this.sd.btns.map(b=>b.id);
+      const assignedGoals=new Set(this.npcs.filter(n=>n._origGoal).map(n=>n._origGoal));
+      const freeBtns=allBtnIds.filter(id=>!assignedGoals.has(id));
+      let fi=0;
+      this.npcs.forEach(npc=>{
+        if(!npc.goal && fi<freeBtns.length){
+          npc.goal=freeBtns[fi++];
+          npc._origGoal=npc.goal;
+        }
+      });
+    }
+    this.elapsed=0;this.cleared=false;this.idleT=0;this.hinted=false;
+    this._toast('리셋!');
+  }
+
+  _chkPlayer(){
+    if(this.cleared)return;
+    const{x,y}=this.player;
+    this.sd.btns.forEach(bd=>{
+      const o=this.btnObjs[bd.id];if(!o)return;
+      Phaser.Math.Distance.Between(x,y,o.wx,o.wy)<T*0.9?this.pressBtn(bd.id,'p'):this.releaseBtn(bd.id,'p');
+    });
+    this.sd.exits.forEach(ed=>{
+      const o=this.exitObjs[ed.id];if(!o||!o.open)return;
+      if(Phaser.Math.Distance.Between(x,y,o.wx,o.wy)<T*1.8)this._clear();
+    });
+  }
+
+  _clear(){
+    if(this.cleared)return;this.cleared=true;
+    if(this.rec.on)this.rec.stop();
+    const t=this.sd.tSec;
+    const stars=this.elapsed<=t*0.7?3:this.elapsed<=t?2:1;
+    this.sv.stageStars[this.sid]=Math.max(this.sv.stageStars[this.sid]||0,stars);
+    this.sv.totalClears=(this.sv.totalClears||0)+1;
+    const[w,s]=this.sid.split('-').map(Number);
+    const nk=`${w}-${s+1}`;
+    if(STAGES[nk]){this.sv.world=w;this.sv.stage=s+1;}
+    const lvNames=['아는 사이','친구','단짝','절친'];
+    this.npcs.forEach(npc=>{
+      const newLv=addFP(this.sv,npc.id,50+stars*20);
+      npc.onClear();
+      if(newLv>0){
+        // 우정 레벨업 알림 — 클리어 화면 이후에 표시
+        this.time.delayedCall(2000,()=>{
+          this._toast(`💜 ${NDEFS[npc.id].name}와 우정 레벨업! → ${lvNames[newLv-1]}`);
+          SND.unlock();
+        });
+      }
+    });
+    svSave(this.sv);
+    // Sound & particles
+    stars===3?SND.star3():SND.clear();
+    if(this.parts){
+      this.parts.clearBurst(this.player.x,this.player.y);
+      this.time.delayedCall(300,()=>this.parts.clearBurst(GW/2,GH/2));
+    }
+    this.time.delayedCall(900,()=>{const h=this.scene.get('HUD');if(h&&h.showClear)h.showClear(stars,this.elapsed,t,this.sid);});
+  }
+
+  _dPlayer(){
+    const g=this.pGfx;g.clear();const{x,y}=this.player;
+    g.fillStyle(C.bg,0.18);g.fillEllipse(x,y+14,28,8);
+    g.fillStyle(C.green,1);g.fillRoundedRect(x-12,y-20,24,28,5);
+    g.fillStyle(C.bg,1);g.fillCircle(x-4,y-10,3);g.fillCircle(x+4,y-10,3);
+    g.fillStyle(0xffffff,1);g.fillCircle(x-3,y-11,1.5);g.fillCircle(x+5,y-11,1.5);
+    g.lineStyle(2,C.bg,1);g.beginPath();g.arc(x,y-3,5,0.2,Math.PI-0.2,false);g.strokePath();
+    if(this.rec.on){g.fillStyle(C.coral,1);g.fillCircle(x+13,y-22,5);}
+  }
+
+  _dEchos(){
+    this.ePBs.forEach(pb=>{
+      const f=pb.frames[pb.fi];
+      pb.gfx.clear();
+      pb.gfx.fillStyle(C.purple,0.38);pb.gfx.fillRoundedRect(f.x-11,f.y-20,22,28,4);
+      pb.gfx.lineStyle(1,C.purple2,0.65);pb.gfx.strokeRoundedRect(f.x-11,f.y-20,22,28,4);
+      if(pb.lbl)pb.lbl.setPosition(f.x,f.y-34);
+      // 이전 프레임의 버튼 상태를 캐싱해 변경 시에만 press/release 호출 (진동 방지)
+      if(!pb.prevPress) pb.prevPress={};
+      const key='e'+pb.si;
+      this.sd.btns.forEach(bd=>{
+        const o=this.btnObjs[bd.id];if(!o)return;
+        const isNear=Phaser.Math.Distance.Between(f.x,f.y,o.wx,o.wy)<T*0.9;
+        const wasNear=!!pb.prevPress[bd.id];
+        if(isNear&&!wasNear) this.pressBtn(bd.id,key);
+        else if(!isNear&&wasNear) this.releaseBtn(bd.id,key);
+        pb.prevPress[bd.id]=isNear;
+      });
+      pb.fi=(pb.fi+1)%pb.frames.length;
+    });
+  }
+
+  _mobile(){
+    const g=this.add.graphics().setDepth(20);
+    const a=0.42;
+    const mkC=(x,y,r,col)=>{g.fillStyle(col,a);g.fillCircle(x,y,r);g.lineStyle(1,C.teal3,0.4);g.strokeCircle(x,y,r);};
+    mkC(55,GH-65,32,C.bg3);mkC(130,GH-65,32,C.bg3);
+    mkC(GW-70,GH-72,36,C.teal3);mkC(GW-150,GH-64,25,C.purple);mkC(GW-216,GH-57,20,C.coral);
+    mkC(GW-280,GH-57,20,C.bg2);   // pause
+    mkC(GW-340,GH-57,20,C.teal3); // talk
+    mkC(GW-395,GH-57,20,0x4a2e80); // boost
+
+    this.add.text(55,GH-65,'◀',{fontSize:'20px',fontFamily:'monospace',color:H(C.teal)}).setOrigin(0.5).setDepth(22);
+    this.add.text(130,GH-65,'▶',{fontSize:'20px',fontFamily:'monospace',color:H(C.teal)}).setOrigin(0.5).setDepth(22);
+    this.add.text(GW-70,GH-72,'↑',{fontSize:'24px',fontFamily:'monospace',color:H(C.teal),fontStyle:'bold'}).setOrigin(0.5).setDepth(22);
+    this.add.text(GW-150,GH-64,'E',{fontSize:'13px',fontFamily:'monospace',color:H(C.purple2),fontStyle:'bold'}).setOrigin(0.5).setDepth(22);
+    this.add.text(GW-216,GH-57,'R',{fontSize:'12px',fontFamily:'monospace',color:H(C.coral),fontStyle:'bold'}).setOrigin(0.5).setDepth(22);
+    this.add.text(GW-280,GH-57,'❚❚',{fontSize:'10px',fontFamily:'monospace',color:H(C.gray)}).setOrigin(0.5).setDepth(22);
+    this.add.text(GW-340,GH-57,'💬',{fontSize:'11px',fontFamily:'monospace',color:H(C.teal)}).setOrigin(0.5).setDepth(22);
+    this.add.text(GW-395,GH-57,'🚀',{fontSize:'11px',fontFamily:'monospace',color:'#a78bfa'}).setOrigin(0.5).setDepth(22);
+
+    const mkZ=(x,y,w,h,cb)=>{const z=this.add.zone(x,y,w,h).setDepth(23).setInteractive();cb(z);return z;};
+    mkZ(55,GH-65,64,64,z=>{z.on('pointerdown',()=>{this.mob.left=true;});z.on('pointerup',()=>{this.mob.left=false;});z.on('pointerout',()=>{this.mob.left=false;});});
+    mkZ(130,GH-65,64,64,z=>{z.on('pointerdown',()=>{this.mob.right=true;});z.on('pointerup',()=>{this.mob.right=false;});z.on('pointerout',()=>{this.mob.right=false;});});
+    mkZ(GW-70,GH-72,72,72,z=>{z.on('pointerdown',()=>{this.mob.jump=true;});});
+    mkZ(GW-150,GH-64,50,50,z=>{z.on('pointerdown',()=>this._echoKey());});
+    mkZ(GW-216,GH-57,40,40,z=>{z.on('pointerdown',()=>this.doReset());});
+    mkZ(GW-280,GH-57,40,40,z=>{z.on('pointerdown',()=>this._togglePause());});
+    mkZ(GW-340,GH-57,40,40,z=>{z.on('pointerdown',()=>this._openTalk());});
+    mkZ(GW-395,GH-57,40,40,z=>{z.on('pointerdown',()=>this._npcBoost());});
+  }
+
+  _toMenu(){
+    this.scene.stop('HUD');
+    this.scene.stop('Game');
+    SND.startRain(); SND.startBGM();
+    this.scene.start('Menu');
+  }
+  _popup(txt){const h=this.scene.get('HUD');if(h&&h.popup)h.popup(txt);}
+  _toast(msg){const h=this.scene.get('HUD');if(h&&h.toast)h.toast(msg);}
+
+  // ── NPC 부스트 시스템 ([F]키) ─────────────────────────────
+  // 가장 가까운 NPC 옆에서 F 누르면 위로 발사
+  _npcBoost(){
+    if(!this.npcs.length)return;
+    const px=this.player.x, py=this.player.y;
+    let closest=null, minD=Infinity;
+    this.npcs.forEach(npc=>{
+      const d=Phaser.Math.Distance.Between(px,py,npc.spr.x,npc.spr.y);
+      if(d<minD){minD=d;closest=npc;}
+    });
+    if(!closest||minD>T*2.5){
+      this._toast('NPC 옆에서 [F]를 누르면 위로 발사해줘요!');
+      return;
+    }
+    // 부스트! 훨씬 높게 점프
+    this.player.setVelocityY(-780);
+    SND.boost();
+    // NPC 반응
+    closest.say('고! 올라가!! 💪');
+    // 시각 효과 — 화살표 파티클
+    if(this.parts) this.parts.burst(px,py,NDEFS[closest.id].color,8,50);
+    this._toast(`${NDEFS[closest.id].name}이(가) 밀어줬어! 🚀`);
+  }
+
+  // ── NPC 대화 명령 시스템 ([T]키) ─────────────────────────
+  _openTalk(){
+    if(this.npcs.length===0){ this._toast('동료가 없어요! 캐릭터 선택에서 선택하세요.'); return; }
+    const h=this.scene.get('HUD');
+    if(!h)return;
+    // _tkActive로 중복 열기 방지 (talkPanel 프로퍼티는 미사용이었음)
+    if(h._tkActive) return;
+    this.paused=true; this.physics.pause();
+    // Build panel in HUD scene
+    if(h.showTalkPanel) h.showTalkPanel(this.npcs, (npcId, cmd)=>this._handleTalkCmd(npcId, cmd));
+  }
+
+  _closeTalk(){
+    this.paused=false; this.physics.resume();
+    const h=this.scene.get('HUD');
+    if(h&&h.hideTalkPanel) h.hideTalkPanel();
+  }
+
+  _handleTalkCmd(npcId, cmd){
+    this._closeTalk();
+    const npc=this.npcs.find(n=>n.id===npcId);
+    if(!npc) return;
+    switch(cmd){
+      case 'go_button': {
+        // Force NPC to head for its goal button now
+        if(npc.goal){ npc.st=NS.MOVE; npc.stT=0; npc.say('응! 버튼으로 갈게 💨'); }
+        else { npc.say('어디로 갈까? 목표가 없어 😅'); }
+        break;
+      }
+      case 'come_here': {
+        // NPC moves to player position
+        // ACT 상태(버튼 누르는 중)라면 먼저 releaseBtn 호출
+        if(npc.pressing && npc._origGoal){
+          this.releaseBtn(npc._origGoal, 'npc_'+npc.id);
+        }
+        npc.pressing = false;
+        const savedGoal = npc._origGoal || null;
+        npc._tempTarget = {wx:this.player.x, wy:this.player.y};
+        npc.goal = '__player__';
+        npc.st = NS.MOVE; npc.stT = 0;
+        npc.say('지금 갈게! 🏃');
+        this.time.delayedCall(3000, ()=>{
+          npc._tempTarget = null;
+          npc.goal = savedGoal;
+          if(savedGoal) { npc.st = NS.MOVE; npc.stT = 0; }
+          else          { npc.st = NS.PATROL; npc.stT = 0; }
+        });
+        break;
+      }
+      case 'wait_here': {
+        // NPC stays still for 8 seconds
+        npc.st=NS.REACT; npc.stT=0;
+        npc.say('여기서 기다릴게! 🧍');
+        this.time.delayedCall(8000,()=>{ if(npc.st===NS.REACT){ npc.st=NS.PATROL; npc.stT=0; } });
+        break;
+      }
+      case 'patrol': {
+        npc.st=NS.PATROL; npc.stT=0;
+        npc.say('자유롭게 돌아다닐게! 😄');
+        break;
+      }
+      case 'cheer': {
+        npc.say(rLine(npcId,'s'));
+        this.time.delayedCall(1500,()=>npc.say('파이팅!! 💪'));
+        break;
+      }
+    }
+  }
+
+  _togglePause(){
+    if(this.cleared)return;
+    this.paused=!this.paused;
+    this.paused?SND.pause():SND.resume();
+    const h=this.scene.get('HUD');
+    if(this.paused){this.physics.pause();if(h&&h.showPauseMenu)h.showPauseMenu();}
+    else{this.physics.resume();if(h&&h.hidePauseMenu)h.hidePauseMenu();}
+  }
+
+  _manualSave(slotIdx){
+    const sd=STAGES[this.sid]||{};
+    // savedBtnState: sv(전역 세이브)에 섞지 않고 slot 전용으로만 저장
+    // → 새 게임/클리어 재진입 시 오염 방지
+    const savedBtnState=Object.assign({},this.btnActive);
+    const snap=Object.assign({},this.sv,{
+      currentStage:this.sid,
+      world:sd.world||1,
+      stage:sd.stage||1,
+      elapsedInStage:Math.floor(this.elapsed),
+    });
+    snap.savedBtnState=savedBtnState; // sv 원본은 건드리지 않고 snap에만 추가
+    // 에코 슬롯 저장
+    snap.savedEchoSlots=this.rec.slots.map(s=>s?s.slice():null);
+    // NPC 상태 저장 (ACT 상태로 버튼 누르고 있는 경우 복원용)
+    snap.savedNpcStates=this.npcs.map(npc=>({
+      id:npc.id,
+      st:npc.st,
+      pressing:npc.pressing,
+      goal:npc.goal,
+    }));
+    const ok=svSlot(slotIdx,snap);
+    const h=this.scene.get('HUD');
+    if(ok){SND.save();if(h&&h.toast)h.toast(`슬롯 ${slotIdx+1}에 저장 완료! 💾`);}
+    else{if(h&&h.toast)h.toast('저장 실패');}
+    return ok;
+  }
+
+  update(_t,dt){
+    if(this.cleared||this.paused)return;
+    this.elapsed+=dt/1000;this.idleT+=dt;
+    const onG=this.player.body.blocked.down;
+    const gL=this.keys.L.isDown||this.keys.A.isDown||this.mob.left;
+    const gR=this.keys.R.isDown||this.keys.D.isDown||this.mob.right;
+    const jmp=this.mob.jump||Phaser.Input.Keyboard.JustDown(this.keys.U)||Phaser.Input.Keyboard.JustDown(this.keys.W)||Phaser.Input.Keyboard.JustDown(this.keys.SP);
+    this.mob.jump=false;
+    if(gL){this.player.setVelocityX(-200);this.idleT=0;}
+    else if(gR){this.player.setVelocityX(200);this.idleT=0;}
+    else this.player.setVelocityX(this.player.body.velocity.x*0.72);
+    if(jmp&&onG){this.player.setVelocityY(-480);this.idleT=0;SND.jump();}
+    if(this.rec.on)this.rec.push({x:this.player.x,y:this.player.y});
+    this._dEchos();
+    this.npcs.forEach(npc=>{
+      // 현재 목표 버튼이 이미 다른 방법으로 눌려있으면 다른 버튼으로 재배정
+      if(npc.goal && this.btnActive[npc.goal] && npc.st===NS.PATROL && !npc.pressing){
+        const allBtns=this.sd.btns.map(b=>b.id);
+        const otherGoals=new Set(this.npcs.filter(n=>n!==npc&&n.goal).map(n=>n.goal));
+        const nextBtn=allBtns.find(id=>!this.btnActive[id]&&!otherGoals.has(id));
+        if(nextBtn){ npc.goal=nextBtn; npc.st=NS.MOVE; npc.stT=0; }
+      }
+      const go=npc.goal?this.btnObjs[npc.goal]:null;
+      npc.update(dt,go);
+    });
+    this._chkPlayer();
+    this._dPlayer();
+    if(!this.hinted&&this.idleT>15000){
+      this.hinted=true;
+      if(this.npcs.length)this.npcs[0].say('[E]로 에코 녹화해서 버튼을 눌러봐! 💡');
+    }
+    // NPC가 가끔 먼저 말 걸기 (30~60초마다 랜덤)
+    if(!this._nextNpcTalk) this._nextNpcTalk=30000+Math.random()*30000;
+    this._nextNpcTalk-=dt;
+    if(this._nextNpcTalk<=0&&this.npcs.length){
+      const npc=this.npcs[Math.floor(Math.random()*this.npcs.length)];
+      npc.say(rLine(npc.id,'i'));
+      this._nextNpcTalk=25000+Math.random()*35000;
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCENE: HUD (parallel overlay)
+// ════════════════════════════════════════════════════════════
+class SHUD extends Phaser.Scene{
+  constructor(){super({key:'HUD',active:false});}
+  init(d){this.G=d.g;}
+
+  create(){
+    // Top bar
+    this.add.rectangle(0,0,GW,36,C.bg2,0.9).setOrigin(0).setDepth(28);
+    const sd=this.G.sd;
+    this.stgT=this.add.text(12,10,`W${sd.world}-${sd.stage}  ${sd.name}`,{fontSize:'12px',fontFamily:'monospace',color:H(C.teal)}).setDepth(30);
+    this.timT=this.add.text(GW/2,10,'00:00',{fontSize:'20px',fontFamily:'monospace',color:H(C.white),fontStyle:'bold'}).setOrigin(0.5,0).setDepth(30);
+    this.starT=[0,1,2].map(i=>this.add.text(GW-120+i*28,10,'☆',{fontSize:'18px',fontFamily:'monospace',color:H(C.line)}).setDepth(30));
+
+    // 버튼 카운터 (상단 왼쪽 아래)
+    this.btnCountT=this.add.text(12,40,'',{fontSize:'10px',fontFamily:'monospace',color:H(C.amber)}).setDepth(30);
+
+    // 출구 방향 화살표 (버튼 모두 눌렸을 때만 표시)
+    this.exitArrow=this.add.text(GW/2,GH/2,'→ 출구로 이동! 🚪',{
+      fontSize:'20px',fontFamily:"'Nunito',sans-serif",
+      color:H(C.teal),fontStyle:'bold',
+      stroke:H(C.bg),strokeThickness:4,
+    }).setOrigin(0.5).setDepth(35).setVisible(false);
+    this.tweens.add({targets:this.exitArrow,x:GW/2+15,duration:600,yoyo:true,repeat:-1,ease:'Sine.easeInOut'});
+
+    // Bottom bar
+    this.add.rectangle(0,GH-20,GW,20,C.bg2,0.82).setOrigin(0).setDepth(28);
+    this.eT=[0,1,2].map(i=>this.add.text(12+i*88,GH-15,`E${i+1}:없음`,{fontSize:'9px',fontFamily:'monospace',color:H(C.line)}).setDepth(30));
+    this.add.text(GW-8,GH-6,'[E]에코  [R]리셋  [T]대화  [F]NPC부스트  [P/ESC]일시정지  방향키이동  SPACE점프',{fontSize:'8px',fontFamily:'monospace',color:H(C.line)}).setOrigin(1,1).setDepth(30);
+
+    // NPC portraits (bottom right)
+    (this.G.sv.selectedNpcs||[]).forEach((id,i)=>{
+      const def=NDEFS[id];const x=GW/2+168+i*46,y=GH-16;
+      const g=this.add.graphics().setDepth(29);
+      g.fillStyle(def.color,0.16);g.fillRoundedRect(x-18,y-13,36,26,5);
+      g.lineStyle(1,def.color,0.5);g.strokeRoundedRect(x-18,y-13,36,26,5);
+      this.add.text(x,y-1,def.name.slice(0,2),{fontSize:'9px',fontFamily:"'Nunito',sans-serif",color:H(def.color),fontStyle:'bold'}).setOrigin(0.5).setDepth(30);
+    });
+
+    // Pause button (top-right)
+    const pb=this.add.text(GW-10,10,'❚❚',{fontSize:'14px',fontFamily:'monospace',color:H(C.dim)}).setOrigin(1,0).setDepth(30).setInteractive({cursor:'pointer'});
+    pb.on('pointerover',()=>pb.setColor(H(C.gray)));pb.on('pointerout',()=>pb.setColor(H(C.dim)));
+    pb.on('pointerup',()=>this.G._togglePause());
+
+    // Pause menu overlay
+    this.pauseLayer=this.add.container(0,0).setDepth(80).setVisible(false);
+    this._buildPauseMenu();
+  }
+
+  _buildPauseMenu(){
+    const cx=GW/2,cy=GH/2;
+    const c=this.pauseLayer;
+    c.removeAll(true);
+
+    // Dim backdrop
+    const dim=this.add.rectangle(0,0,GW,GH,0x000000,0.72).setOrigin(0);
+    // Main panel
+    const panel=this.add.graphics();
+    panel.fillStyle(C.bg2,1);panel.fillRoundedRect(cx-220,cy-210,440,420,14);
+    panel.lineStyle(2,C.teal,1);panel.strokeRoundedRect(cx-220,cy-210,440,420,14);
+    // Accent bar
+    panel.fillStyle(C.teal,1);panel.fillRoundedRect(cx-220,cy-210,440,4,0);
+
+    const title=this.add.text(cx,cy-168,'일시 정지',{fontSize:'24px',fontFamily:"'Nunito',sans-serif",color:H(C.teal),fontStyle:'bold'}).setOrigin(0.5);
+
+    // Stage & time info
+    const infoTxt=this.add.text(cx,cy-130,
+      `${this.G.sd.name}  ·  경과 ${Math.floor(this.G.elapsed)}초`,
+      {fontSize:'12px',fontFamily:'monospace',color:H(C.gray)}).setOrigin(0.5);
+
+    // ── 메뉴 버튼들 ─────────────────────────────────────────
+    const btns=[
+      {txt:'▶  계속하기',     bg:C.teal3, col:C.teal,  cb:()=>this.G._togglePause()},
+      {txt:'💾  저장하기',    bg:C.bg3,  col:C.white, cb:()=>this._showSaveSlots()},
+      {txt:'↺  스테이지 처음부터', bg:C.bg3, col:C.gray, cb:()=>{this.hidePauseMenu();this.G.doReset();}},
+      {txt:'🏠  메뉴로 나가기', bg:0x1a0a0a,col:C.coral, cb:()=>this._confirmQuit()},
+    ];
+    const btnObjs=btns.map((b,i)=>{
+      const y=cy-72+i*62;
+      const bg=this.add.graphics();
+      bg.fillStyle(b.bg,1);bg.fillRoundedRect(cx-160,y-18,320,40,8);
+      bg.lineStyle(0.5,C.line,1);bg.strokeRoundedRect(cx-160,y-18,320,40,8);
+      const t=this.add.text(cx,y+2,b.txt,{fontSize:'14px',fontFamily:"'Nunito',sans-serif",color:H(b.col),fontStyle:'bold'}).setOrigin(0.5);
+      const z=this.add.zone(cx,y+2,320,40).setInteractive({cursor:'pointer'});
+      z.on('pointerover',()=>{bg.clear();bg.fillStyle(b.bg,1);bg.fillRoundedRect(cx-160,y-18,322,42,8);bg.lineStyle(1.5,b.col,0.7);bg.strokeRoundedRect(cx-160,y-18,322,42,8);});
+      z.on('pointerout', ()=>{bg.clear();bg.fillStyle(b.bg,1);bg.fillRoundedRect(cx-160,y-18,320,40,8);bg.lineStyle(0.5,C.line,1);bg.strokeRoundedRect(cx-160,y-18,320,40,8);});
+      z.on('pointerup',  ()=>b.cb());
+      return[bg,t,z];
+    });
+
+    const hint=this.add.text(cx,cy+182,'[P] 또는 [ESC] 로도 재개할 수 있어요',{fontSize:'10px',fontFamily:'monospace',color:H(C.dim)}).setOrigin(0.5);
+
+    c.add([dim,panel,title,infoTxt,hint]);
+    btnObjs.forEach(arr=>c.add(arr));
+  }
+
+  showPauseMenu(){
+    this._buildPauseMenu(); // refresh info (elapsed time etc)
+    this.pauseLayer.setVisible(true);
+  }
+
+  hidePauseMenu(){
+    this.pauseLayer.setVisible(false);
+    // Close any sub-panels
+    if(this.savePanel){this.savePanel.destroy();this.savePanel=null;}
+    if(this.confirmPanel){this.confirmPanel.destroy();this.confirmPanel=null;}
+  }
+
+  _showSaveSlots(){
+    if(this.savePanel){this.savePanel.destroy();this.savePanel=null;}
+    const cx=GW/2,cy=GH/2;
+    this.savePanel=this.add.container(0,0).setDepth(90);
+    const bg=this.add.graphics();
+    bg.fillStyle(C.bg,0.98);bg.fillRoundedRect(cx-190,cy-155,380,310,12);
+    bg.lineStyle(1.5,C.teal2,1);bg.strokeRoundedRect(cx-190,cy-155,380,310,12);
+    const title=this.add.text(cx,cy-126,'저장 슬롯 선택',{fontSize:'18px',fontFamily:"'Nunito',sans-serif",color:H(C.teal),fontStyle:'bold'}).setOrigin(0.5);
+    const sub=this.add.text(cx,cy-100,'저장할 슬롯을 선택하세요.',{fontSize:'11px',fontFamily:'monospace',color:H(C.dim)}).setOrigin(0.5);
+
+    const slots=ldSlots();
+    const slotItems=slots.map((sl,i)=>{
+      const y=cy-60+i*80;
+      const isEmpty=!sl;
+      const sbg=this.add.graphics();
+      const drawSlotBg=(hover)=>{
+        sbg.clear();
+        sbg.fillStyle(hover?C.teal3:C.bg3,1);sbg.fillRoundedRect(cx-160,y-24,320,56,8);
+        sbg.lineStyle(hover?1.5:0.5,hover?C.teal:C.line,1);sbg.strokeRoundedRect(cx-160,y-24,320,56,8);
+      };
+      drawSlotBg(false);
+      const slotNum=this.add.text(cx-144,y-10,`슬롯 ${i+1}`,{fontSize:'12px',fontFamily:'monospace',color:H(C.teal),fontStyle:'bold'});
+      const slotInfo=this.add.text(cx-144,y+8,
+        isEmpty?'— 비어있음 —':`${sl.currentStage||`${sl.world||1}-${sl.stage||1}`}  ·  클리어 ${sl.totalClears||0}회  ·  ${sl.savedAtStr||''}` ,
+        {fontSize:'11px',fontFamily:'monospace',color:H(isEmpty?C.line:C.gray)});
+      const overwrite=(!isEmpty)?this.add.text(cx+140,y-10,'덮어쓰기',{fontSize:'9px',fontFamily:'monospace',color:H(C.coral)}).setOrigin(1,0):null;
+      const z=this.add.zone(cx,y,320,56).setInteractive({cursor:'pointer'});
+      z.on('pointerover',()=>drawSlotBg(true));z.on('pointerout',()=>drawSlotBg(false));
+      z.on('pointerup',()=>{
+        const ok=this.G._manualSave(i);
+        if(ok){
+          // 저장 성공 → 패널 새로고침으로 모든 슬롯 정확하게 표시
+          if(this.savePanel){this.savePanel.destroy();this.savePanel=null;}
+          this._showSaveSlots();
+        }
+      });
+      const arr=[sbg,slotNum,slotInfo,z];
+      if(overwrite)arr.push(overwrite);
+      return arr;
+    });
+
+    const closeBtn=this.add.text(cx,cy+130,'← 닫기',{fontSize:'13px',fontFamily:"'Nunito',sans-serif",color:H(C.gray),backgroundColor:H(C.bg2),padding:{x:22,y:8},fontStyle:'bold'}).setOrigin(0.5).setInteractive({cursor:'pointer'});
+    closeBtn.on('pointerup',()=>{if(this.savePanel){this.savePanel.destroy();this.savePanel=null;}});
+
+    this.savePanel.add([bg,title,sub,closeBtn]);
+    slotItems.forEach(arr=>this.savePanel.add(arr));
+  }
+
+  _confirmQuit(){
+    if(this.confirmPanel){this.confirmPanel.destroy();this.confirmPanel=null;}
+    const cx=GW/2,cy=GH/2;
+    this.confirmPanel=this.add.container(0,0).setDepth(95);
+    const bg=this.add.graphics();
+    bg.fillStyle(C.bg,0.98);bg.fillRoundedRect(cx-180,cy-90,360,180,12);
+    bg.lineStyle(1.5,C.coral,1);bg.strokeRoundedRect(cx-180,cy-90,360,180,12);
+    const title=this.add.text(cx,cy-60,'정말 나가시겠어요?',{fontSize:'18px',fontFamily:"'Nunito',sans-serif",color:H(C.coral),fontStyle:'bold'}).setOrigin(0.5);
+    const sub=this.add.text(cx,cy-28,'저장하지 않으면 이번 스테이지 진행은 사라져요.',{fontSize:'11px',fontFamily:'monospace',color:H(C.gray),wordWrap:{width:320},align:'center'}).setOrigin(0.5);
+    const saveQuit=this.add.text(cx-60,cy+40,'💾 저장 후 나가기',{fontSize:'12px',fontFamily:"'Nunito',sans-serif",color:H(C.white),backgroundColor:H(C.teal3),padding:{x:14,y:8},fontStyle:'bold'}).setOrigin(0.5).setInteractive({cursor:'pointer'});
+    const justQuit=this.add.text(cx+80,cy+40,'그냥 나가기',{fontSize:'12px',fontFamily:"'Nunito',sans-serif",color:H(C.coral),backgroundColor:H(0x1a0a0a),padding:{x:14,y:8}}).setOrigin(0.5).setInteractive({cursor:'pointer'});
+    const cancel=this.add.text(cx,cy+78,'취소',{fontSize:'11px',fontFamily:'monospace',color:H(C.dim)}).setOrigin(0.5).setInteractive({cursor:'pointer'});
+
+    saveQuit.on('pointerup',()=>{
+      // Quick-save to slot 0 then quit
+      this.G._manualSave(0);
+      setTimeout(()=>{ this.scene.stop('HUD');this.scene.stop('Game');this.scene.start('Menu'); },400);
+    });
+    justQuit.on('pointerup',()=>{ this.scene.stop('HUD');this.scene.stop('Game');this.scene.start('Menu'); });
+    cancel.on('pointerup',()=>{if(this.confirmPanel){this.confirmPanel.destroy();this.confirmPanel=null;}});
+
+    this.confirmPanel.add([bg,title,sub,saveQuit,justQuit,cancel]);
+  }
+
+  update(){
+    if(!this.G||this.G.elapsed===undefined)return;
+    // 클리어 후에는 타이머/별 업데이트 중단 (클리어 화면 UI가 덮어씌워짐)
+    if(this.G.cleared)return;
+    const e=this.G.elapsed;
+    this.timT.setText(`${Math.floor(e/60).toString().padStart(2,'0')}:${Math.floor(e%60).toString().padStart(2,'0')}`);
+    const t=this.G.sd.tSec;const cs=e<=t*0.7?3:e<=t?2:1;
+    this.starT.forEach((s,i)=>s.setText(i<cs?'★':'☆').setColor(i<cs?H(C.amber):H(C.line)));
+    const rc=this.G.rec;
+    [0,1,2].forEach(i=>{
+      let txt,col;
+      if(rc.on&&rc.cur===i){txt=`E${i+1}:●녹화`;col=H(C.coral);}
+      else if(rc.has(i)){txt=`E${i+1}:✓재생`;col=H(C.purple2);}
+      else{txt=`E${i+1}:없음`;col=H(C.line);}
+      this.eT[i].setText(txt).setColor(col);
+    });
+    // 버튼 카운터 업데이트
+    if(this.btnCountT&&this.G.btnActive){
+      const total=Object.keys(this.G.btnActive).length;
+      const pressed=Object.values(this.G.btnActive).filter(Boolean).length;
+      if(total>0){
+        if(pressed===total){
+          this.btnCountT.setText('🟢 버튼 완료! 출구로 이동하세요 →').setColor(H(C.teal));
+        }else{
+          this.btnCountT.setText(`🟡 버튼 ${pressed}/${total} 눌림`).setColor(H(C.amber));
+        }
+      }
+    }
+    // 출구 화살표 — 모든 버튼 눌렸을 때만 표시
+    if(this.exitArrow&&this.G.exitObjs){
+      const anyOpen=Object.values(this.G.exitObjs).some(o=>o.open);
+      this.exitArrow.setVisible(anyOpen&&!this.G.cleared);
+    }
+  }
+
+  toast(msg){const t=this.add.text(GW/2,GH/2-55,msg,{fontSize:'13px',fontFamily:"'Nunito',sans-serif",color:H(C.teal),backgroundColor:H(C.bg3),padding:{x:14,y:7}}).setOrigin(0.5).setDepth(55);this.tweens.add({targets:t,alpha:0,y:t.y-40,duration:2000,onComplete:()=>t.destroy()});}
+
+  popup(txt){
+    const p=this.add.rectangle(GW/2,GH-90,GW-50,72,C.bg3,0.96).setStrokeStyle(1,C.teal3).setDepth(50);
+    const t=this.add.text(GW/2,GH-90,txt,{fontSize:'11px',fontFamily:"'Nunito',sans-serif",color:H(C.white),wordWrap:{width:GW-80},align:'center'}).setOrigin(0.5).setDepth(51);
+    const x=this.add.text(GW-30,GH-62,'✕',{fontSize:'13px',fontFamily:'monospace',color:H(C.dim)}).setOrigin(0.5).setDepth(52).setInteractive({cursor:'pointer'});
+    x.on('pointerup',()=>{p.destroy();t.destroy();x.destroy();});
+    this.time.delayedCall(7000,()=>{if(p.active){p.destroy();t.destroy();x.destroy();}});
+  }
+
+  showClear(stars,elapsed,target,sid){
+    const cx=GW/2,cy=GH/2;
+    // Dim + panel
+    this.add.rectangle(0,0,GW,GH,0,0.7).setOrigin(0).setDepth(60);
+    const panel=this.add.graphics().setDepth(61);
+    panel.fillStyle(C.bg2,1); panel.fillRoundedRect(cx-230,cy-160,460,360,16);
+    panel.lineStyle(2.5,C.teal,1); panel.strokeRoundedRect(cx-230,cy-160,460,360,16);
+    // 별 상태별 헤더 컬러
+    const hdrCol=stars===3?C.amber:C.teal;
+    panel.fillStyle(hdrCol,0.15); panel.fillRoundedRect(cx-230,cy-160,460,44,{tl:16,tr:16,bl:0,br:0});
+
+    // 제목
+    const titleTxt=stars===3?'퍼펙트 클리어!! 🌟':stars===2?'스테이지 클리어! 🎉':'클리어 완료! ✅';
+    this.add.text(cx,cy-138,titleTxt,{fontSize:'26px',fontFamily:"'Nunito',sans-serif",color:H(hdrCol),fontStyle:'bold'}).setOrigin(0.5).setDepth(62);
+
+    // 별점
+    this.add.text(cx,cy-88,[1,2,3].map(i=>i<=stars?'★':'☆').join('  '),{fontSize:'44px',fontFamily:'monospace',color:H(C.amber)}).setOrigin(0.5).setDepth(62);
+
+    // 시간 정보
+    const timeRatio=Math.floor((elapsed/target)*100);
+    this.add.text(cx,cy-34,`${Math.floor(elapsed)}초  /  목표 ${target}초  (${timeRatio}%)`,{fontSize:'13px',fontFamily:'monospace',color:H(C.gray)}).setOrigin(0.5).setDepth(62);
+
+    // 우정 포인트 + NPC 아바타들
+    const fp=50+stars*20;
+    this.add.text(cx,cy-4,`우정 포인트 +${fp}`,{fontSize:'11px',fontFamily:'monospace',color:H(C.purple2)}).setOrigin(0.5).setDepth(62);
+
+    // NPC 아바타 행
+    const npcs=this.G.npcs||[];
+    if(npcs.length>0){
+      const spacing=56;
+      const startX=cx-(npcs.length-1)*spacing/2;
+      npcs.forEach((npc,i)=>{
+        const ax=startX+i*spacing, ay=cy+30;
+        const def=NDEFS[npc.id];
+        const ag=this.add.graphics().setDepth(62);
+        ag.fillStyle(def.color,1); ag.fillCircle(ax,ay,18);
+        ag.fillStyle(C.bg,0.5); ag.fillCircle(ax,ay,18);
+        ag.fillStyle(def.color,1); ag.fillCircle(ax,ay,14);
+        this.add.text(ax,ay,def.name.slice(0,1),{fontSize:'12px',fontFamily:"'Nunito',sans-serif",color:H(C.bg),fontStyle:'bold'}).setOrigin(0.5).setDepth(63);
+        // 레벨 뱃지
+        const lv=this.G.sv.friendshipLv[npc.id]||0;
+        this.add.text(ax,ay+24,'Lv.'+lv,{fontSize:'8px',fontFamily:'monospace',color:H(def.color)}).setOrigin(0.5).setDepth(62);
+      });
+    }
+
+    // 버튼들
+    const[w,s]=sid.split('-').map(Number);
+    const nk=`${w}-${s+1}`;
+    const hasN=!!STAGES[nk];
+    const mk=(x,y,txt,bg,col,cb)=>{
+      const b=this.add.text(x,y,txt,{fontSize:'15px',fontFamily:"'Nunito',sans-serif",color:H(col),backgroundColor:H(bg),padding:{x:22,y:11},fontStyle:'bold'}).setOrigin(0.5).setDepth(62).setInteractive({cursor:'pointer'});
+      b.on('pointerover',()=>b.setScale(1.05));b.on('pointerout',()=>b.setScale(1));
+      b.on('pointerup',()=>cb());return b;
+    };
+    mk(cx+(hasN?70:0),cy+130,hasN?'다음 스테이지 →':'🏠  메뉴로',C.teal,0x0a2218,()=>{
+      this.scene.stop('HUD');this.scene.stop('Game');
+      hasN?this.scene.start('Game',{sid:nk}):this.scene.start('Menu');
+    });
+    if(hasN){
+      mk(cx-80,cy+130,'↺ 다시',C.bg3,C.gray,()=>{this.scene.stop('HUD');this.scene.stop('Game');this.scene.start('Game',{sid});});
+      mk(cx-220,cy+130,'메뉴',C.bg2,C.dim,()=>{this.scene.stop('HUD');this.scene.stop('Game');this.scene.start('Menu');});
+    }
+    // NPC 반응 대사
+    npcs.forEach((npc,i)=>this.time.delayedCall(500+i*700,()=>npc.say(rLine(npc.id,'c'))));
+  }
+
+  // ── NPC 대화 패널 ─────────────────────────────────────────
+  // ── 채팅 시스템: NPC와 채팅처럼 대화 ─────────────────────
+  // ── 실제 채팅 시스템: HTML input 오버레이 방식 ─────────────
+  // ── 채팅 시스템 (Phaser 전용 — WebGL 안전) ────────────────
+  // ── 채팅 시스템 (Container 없음 — z-order 버그 완전 제거) ──
+  // ──────────────────────────────────────────────────────────
+  //  채팅 시스템 v4 — dim 잔여 버그 완전 수정
+  // ──────────────────────────────────────────────────────────
+  // ══ 채팅 패널 v5 — 완전 재작성 (blocker 제거, depth 수정) ══
+  showTalkPanel(npcs, onCmd){
+    this._killTalk();
+    if(!npcs||npcs.length===0)return;
+
+    this._tkActive=true;
+    this._tkObjs=[];
+    this._tkMsgs=[];
+    this._tkTimers=[];
+    let selNpc=npcs[0];
+    const chatLogs={};
+    npcs.forEach(n=>{ chatLogs[n.id]=[{who:'npc',text:rLine(n.id,'s')}]; });
+
+    const W=500, PH=520, px=(GW-W)/2, py=(GH-PH)/2;
+    const CHAT_Y=py+88, CHAT_H=PH-218;
+    const OPT_Y=CHAT_Y+CHAT_H+6;
+
+    const add=(o)=>{ this._tkObjs.push(o); return o; };
+
+    // ── dim: 패널 밖 클릭 시만 닫힘 (blocker 불필요) ───────
+    const dim=add(this.add.rectangle(GW/2,GH/2,GW,GH,0x000000,0.60)
+      .setDepth(90).setInteractive({cursor:'default'}));
+    dim.on('pointerdown',(ptr)=>{
+      const inside=(ptr.x>=px&&ptr.x<=px+W&&ptr.y>=py&&ptr.y<=py+PH);
+      if(!inside&&this._tkActive){ if(this.G)this.G._closeTalk(); }
+    });
+
+    // ── 패널 배경 ─────────────────────────────────────────
+    const pg=add(this.add.graphics().setDepth(91));
+    const caBg=add(this.add.graphics().setDepth(91));
+
+    const drawPg=()=>{
+      const def=NDEFS[selNpc.id];
+      pg.clear();
+      pg.fillStyle(0x1a2440,1); pg.fillRoundedRect(px,py,W,PH,14);
+      pg.lineStyle(2.5,def.color,1); pg.strokeRoundedRect(px,py,W,PH,14);
+      pg.fillStyle(def.color,0.18); pg.fillRoundedRect(px,py,W,48,{tl:14,tr:14,bl:0,br:0});
+      caBg.clear();
+      caBg.fillStyle(0x060c14,0.95); caBg.fillRoundedRect(px+8,CHAT_Y-2,W-16,CHAT_H+4,7);
+    };
+    drawPg();
+
+    // ── 헤더 ──────────────────────────────────────────────
+    const hdr=add(this.add.text(px+W/2,py+22,'',{
+      fontSize:'15px',fontFamily:"'Nunito',sans-serif",fontStyle:'bold'
+    }).setOrigin(0.5).setDepth(93));
+    const updHdr=()=>{ const d=NDEFS[selNpc.id]; hdr.setText('💬 '+d.name+' ('+d.type+')').setColor(H(d.color)); };
+    updHdr();
+
+    // ── 닫기 버튼 ─────────────────────────────────────────
+    const xBg=add(this.add.graphics().setDepth(93));
+    xBg.fillStyle(0x5a1a1a,1); xBg.fillCircle(px+W-22,py+22,18);
+    const xBt=add(this.add.text(px+W-22,py+22,'✕',{
+      fontSize:'20px',fontFamily:'monospace',color:'#ff8888',fontStyle:'bold'
+    }).setOrigin(0.5).setDepth(95).setInteractive({cursor:'pointer'}));
+    xBt.on('pointerover',()=>xBt.setColor('#ffcccc'));
+    xBt.on('pointerout', ()=>xBt.setColor('#ff8888'));
+    xBt.on('pointerup',  ()=>{ if(this.G)this.G._closeTalk(); });
+
+    // ── NPC 탭 (depth 높게!) ──────────────────────────────
+    const tw=Math.min(88,Math.floor((W-20)/npcs.length));
+    const tabs=npcs.map((npc,i)=>{
+      const def=NDEFS[npc.id], tx=px+10+i*tw, ty=py+52;
+      const tbg=add(this.add.graphics().setDepth(92));
+      const drawTab=(sel)=>{
+        tbg.clear();
+        tbg.fillStyle(sel?def.color:0x2a3555,sel?0.35:1);
+        tbg.fillRoundedRect(tx,ty,tw-4,28,6);
+        tbg.lineStyle(sel?2:0.5,sel?def.color:0x506080,1);
+        tbg.strokeRoundedRect(tx,ty,tw-4,28,6);
+      };
+      drawTab(npc.id===selNpc.id);
+      const tnm=add(this.add.text(tx+(tw-4)/2,ty+14,def.name,{
+        fontSize:'11px',fontFamily:"'Nunito',sans-serif",color:H(def.color),fontStyle:'bold'
+      }).setOrigin(0.5).setDepth(94));
+      // ★ 핵심: zone에 depth 96 설정 (blocker보다 높아야 클릭 가능)
+      const tz=add(this.add.zone(tx+(tw-4)/2,ty+14,tw-4,28)
+        .setDepth(96).setInteractive({cursor:'pointer'}));
+      tz.on('pointerover',()=>{ tbg.clear(); tbg.fillStyle(def.color,0.25); tbg.fillRoundedRect(tx,ty,tw-4,28,6); tbg.lineStyle(1.5,def.color,1); tbg.strokeRoundedRect(tx,ty,tw-4,28,6); });
+      tz.on('pointerout', ()=>drawTab(npc.id===selNpc.id));
+      tz.on('pointerup',  ()=>{
+        selNpc=npc;
+        tabs.forEach(t=>t.drawTab(t.npc.id===selNpc.id));
+        drawPg(); updHdr(); renderMsgs(); SND.menuMove();
+      });
+      return{tbg,drawTab,tnm,tz,npc};
+    });
+
+    // ── 메시지 렌더 ───────────────────────────────────────
+    const renderMsgs=()=>{
+      if(!this._tkActive)return;
+      this._tkMsgs.forEach(o=>{
+        try{if(o.bg&&!o.bg.destroyed)o.bg.destroy();}catch{}
+        try{if(o.t&&!o.t.destroyed)o.t.destroy();}catch{}
+      });
+      this._tkMsgs=[];
+      const mw=W-40;
+      (chatLogs[selNpc.id]||[]).slice(-6).forEach((m,i)=>{
+        const isP=(m.who==='player'), y=CHAT_Y+i*44;
+        const bg=this.add.graphics().setDepth(93);
+        if(isP){
+          bg.fillStyle(0x0d5440,0.95); bg.fillRoundedRect(px+W-22-mw,y,mw,36,8);
+          bg.lineStyle(1,0x1ab585,0.7); bg.strokeRoundedRect(px+W-22-mw,y,mw,36,8);
+        }else{
+          bg.fillStyle(0x1e2d48,0.95); bg.fillRoundedRect(px+14,y,mw,36,8);
+          bg.lineStyle(1,NDEFS[selNpc.id].color,0.5); bg.strokeRoundedRect(px+14,y,mw,36,8);
+        }
+        const t=this.add.text(
+          isP?(px+W-26):(px+18), y+18, m.text,
+          {fontSize:'12px',fontFamily:"'Nunito',sans-serif",color:'#f0faff',wordWrap:{width:mw-10}}
+        ).setOrigin(isP?1:0,0.5).setDepth(94);
+        this._tkMsgs.push({bg,t});
+      });
+    };
+
+    // ── 선택지 버튼 6개 (depth 96!) ───────────────────────
+    const opts=[
+      {l:'🎯 버튼으로 가줘', c:'go_button', co:0x0d8060},
+      {l:'🏃 나한테 와줘',   c:'come_here', co:0x0d5080},
+      {l:'🧍 기다려줘',     c:'wait_here', co:0x806010},
+      {l:'💪 파이팅!',      c:'cheer',     co:0x602090},
+      {l:'😄 자유롭게',     c:'patrol',    co:0x205080},
+      {l:'❓ 어떻게 해?',   c:'help',      co:0x804010},
+    ];
+    const OW=(W-20)/3-4, OH=34;
+    opts.forEach((opt,i)=>{
+      const col2=i%3, row2=Math.floor(i/3);
+      const ox=px+10+col2*(OW+6), oy=OPT_Y+row2*40;
+      const og=add(this.add.graphics().setDepth(92));
+      const dO=(hv)=>{
+        og.clear();
+        og.fillStyle(opt.co,hv?0.55:0.25);
+        og.fillRoundedRect(ox,oy,OW,OH,7);
+        og.lineStyle(hv?2:1,opt.co,hv?1:0.7);
+        og.strokeRoundedRect(ox,oy,OW,OH,7);
+      };
+      dO(false);
+      const ot=add(this.add.text(ox+OW/2,oy+OH/2,opt.l,{
+        fontSize:'10.5px',fontFamily:"'Nunito',sans-serif",color:'#ddefff'
+      }).setOrigin(0.5).setDepth(94));
+      // ★ 핵심: depth 96
+      const oz=add(this.add.zone(ox+OW/2,oy+OH/2,OW,OH)
+        .setDepth(96).setInteractive({cursor:'pointer'}));
+      oz.on('pointerover',()=>dO(true));
+      oz.on('pointerout', ()=>dO(false));
+      oz.on('pointerup', ()=>{
+        chatLogs[selNpc.id]=chatLogs[selNpc.id]||[];
+        chatLogs[selNpc.id].push({who:'player',text:opt.l});
+        renderMsgs(); SND.chatMsg();
+        const tm=this.time.delayedCall(400+Math.random()*300,()=>{
+          if(!this._tkActive)return;
+          chatLogs[selNpc.id].push({who:'npc',text:this._npcReply(selNpc.id,opt.l)});
+          renderMsgs(); SND.chatMsg();
+          if(opt.c!=='help') onCmd(selNpc.id,opt.c);
+        });
+        this._tkTimers.push(tm);
+      });
+    });
+
+    // ── 직접 입력 라벨 ────────────────────────────────────
+    const inpY=OPT_Y+2*40+8;
+    add(this.add.graphics().setDepth(92))
+      .fillStyle(0x0a1220,1).fillRoundedRect(px+8,inpY-2,W-78,38,6);
+    add(this.add.text(px+16,inpY+8,'💬 직접 입력:',{
+      fontSize:'10px',fontFamily:'monospace',color:'#88aabb'
+    }).setDepth(93));
+
+    // ── 전송 버튼 ─────────────────────────────────────────
+    const sbg=add(this.add.graphics().setDepth(92));
+    sbg.fillStyle(0x0d4f3c,1); sbg.fillRoundedRect(px+W-64,inpY-2,54,38,6);
+    const sbt=add(this.add.text(px+W-37,inpY+17,'→',{
+      fontSize:'22px',fontFamily:'monospace',color:'#2de8b0',fontStyle:'bold'
+    }).setOrigin(0.5).setDepth(95).setInteractive({cursor:'pointer'}));
+    sbt.on('pointerover',()=>sbt.setColor('#ffffff'));
+    sbt.on('pointerout', ()=>sbt.setColor('#2de8b0'));
+
+    // ── DOM input (canvas 좌표 보정 + resize 대응) ───────────
+    const cv=this.sys.game.canvas;
+    const iEl=document.createElement('input');
+    iEl.type='text'; iEl.placeholder='자유롭게 입력 후 Enter'; iEl.maxLength=60;
+    iEl.className='echo-chat-in';
+    iEl.style.cssText='position:fixed;z-index:9999;'+
+      'background:#0a1a2a;color:#e8f8f0;border:1.5px solid #2de8b0;'+
+      'border-radius:6px;padding:0 10px;outline:none;';
+    document.body.appendChild(iEl);
+    this._tkInputEl=iEl;
+
+    // 위치/크기 갱신 함수 — 패널 열린 동안 resize에도 재계산
+    const updateInputPos=()=>{
+      if(!iEl.parentNode)return;
+      const rc2=cv.getBoundingClientRect();
+      const sx2=rc2.width/GW, sy2=rc2.height/GH;
+      iEl.style.left=(rc2.left+(px+10)*sx2)+'px';
+      iEl.style.top=(rc2.top+(inpY-2)*sy2)+'px';
+      iEl.style.width=((W-78)*sx2)+'px';
+      iEl.style.height=(38*sy2)+'px';
+      iEl.style.fontSize=Math.max(11,12*Math.min(sx2,sy2))+'px';
+    };
+    updateInputPos();
+    this._tkResizeFn=updateInputPos;
+    window.addEventListener('resize',updateInputPos);
+
+    const sendTxt=()=>{
+      const txt=(iEl.value||'').trim(); if(!txt)return; iEl.value='';
+      chatLogs[selNpc.id]=chatLogs[selNpc.id]||[];
+      chatLogs[selNpc.id].push({who:'player',text:txt});
+      renderMsgs(); SND.chatMsg();
+      const tm=this.time.delayedCall(400+Math.random()*400,()=>{
+        if(!this._tkActive)return;
+        chatLogs[selNpc.id].push({who:'npc',text:this._npcReply(selNpc.id,txt)});
+        renderMsgs(); SND.chatMsg();
+        const cmd=this._cmdDetect(txt);
+        if(cmd) onCmd(selNpc.id,cmd);
+      });
+      this._tkTimers.push(tm);
+    };
+    sbt.on('pointerup',()=>sendTxt());
+    iEl.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();sendTxt();} });
+
+    // ── T키 닫기 ──────────────────────────────────────────
+    this._tkKeyFn=()=>{ if(this.G)this.G._closeTalk(); };
+    this.input.keyboard.on('keydown-T',this._tkKeyFn);
+
+    renderMsgs();
+    setTimeout(()=>{ try{iEl.focus();}catch{} },120);
+  }
+  _npcReply(id,txt){
+    const t=txt.toLowerCase();
+    const R=(a)=>a[Math.floor(Math.random()*a.length)];
+    // 캐릭터 인덱스
+    const idx={luna:0,rico:1,moca:2,blaze:3,peach:4}[id]??0;
+    const pick=(a)=>a[idx]??a[0];
+    // 게임 상태 읽기
+    const G=this.G;
+    const btnCount=G?Object.keys(G.btnActive||{}).length:0;
+    const pressedCount=G?Object.values(G.btnActive||{}).filter(Boolean).length:0;
+    const allPressed=btnCount>0&&pressedCount===btnCount;
+
+    // ── 게임 상태 연동 응답 ──
+    if(t.includes('버튼')||t.includes('🎯')||t.includes('누를게')||t.includes('눌러줄게')){
+      if(allPressed) return pick(['이미 다 눌렸어! 출구로 가!! 🚪💡','다 눌렸잖아!! 빨리 출구!','버튼 전부 활성화 완료. 출구 이동.','다 됐어!! 달려!! ⚡','다 눌렸어!! 출구로 가요! 💕']);
+      const left=btnCount-pressedCount;
+      return pick([`${left}개 남았어. 내가 갈게! 💡`,`${left}개 남았어!! 지금 달린다!! 💨`,`남은 버튼: ${left}개. 이동.`,`${left}개!! 빠르게!! ⚡`,`${left}개 남았어요. 같이 해요! 💕`]);
+    }
+    if(t.includes('출구')||t.includes('나가')||t.includes('클리어')){
+      if(allPressed) return pick(['출구 열렸어!! 지금 가!! 🚪💡','달려!! 출구!! 💨','출구 활성화. 이동하세요.','GO GO GO!! ⚡','어서 출구로!! 💕🚪']);
+      return pick(['아직 버튼을 다 안 눌렀어 💡','버튼 먼저!! 그다음 출구!!','버튼 전부 → 출구 해제 순서.','버튼부터 눌러야지!! ⚡','버튼이 다 눌려야 출구 열려요 🌸']);
+    }
+    if(t.includes('에코')||t.includes('녹화')||t.includes('[e]')){
+      return pick(['[E] 누르면 녹화 시작! 버튼 위 서 있다가 다시 [E] → 루프 재생돼 💡','에코로 버튼 여러 개 동시에 가능! 빠르게 해봐!!','에코: 행동을 녹화→재생. 3개까지 사용 가능.','에코 배치하고 나 따라와!! ⚡','[E]로 녹화, [E]로 정지예요! 같이 해봐요 🌸']);
+    }
+    if(t.includes('어떻게')||t.includes('❓')||t.includes('모르겠')||t.includes('힌트')||t.includes('도움')){
+      return pick(['버튼을 전부 동시에 눌러야 해! 에코([E])로 분신을 만들면 혼자도 가능해 💡','일단 에코 써봐! [E]로 녹화하고 버튼 위에 서있어. 그다음 [E] 정지. 루프됨!','전략: 에코 3개 배치 → 각 버튼 커버 → 동시 활성화.','그냥 빨리 달리면서 에코 써봐!! ⚡','천천히 해봐요. [E]키로 에코 쓰면 돼요! 🌸']);
+    }
+    if(t.includes('안녕')||t.includes('하이')||t==='hi'||t.includes('처음')){
+      return pick(['안녕! 난 루나야 😊 막히면 언제든 물어봐!','야 왔어? 같이 빠르게 클리어하자!!','안녕. 나는 모카. 데이터 분석 전문.','블레이즈!! 빠른 클리어가 목표야 ⚡','안녕하세요~ 피치예요! 잘 부탁해요 💕']);
+    }
+    if(t.includes('이름')||t.includes('누구')||t.includes('소개')){
+      return pick(['루나야! 가이드형. 막히면 힌트, 전략 조언이 특기 💡','리코!! 돌격형. 빠른 행동, 빠른 클리어. 생각보다 실행 먼저!!','모카. 분석형. 에러율 2%, 타이밍 정확도 98%. 믿어도 됨.','블레이즈!! 스피드형. 이 팀 최속!! 나 따라오면 됨 ⚡','피치예요! 서포터형. 팀원 응원과 협력이 전문이에요 💕']);
+    }
+    if(t.includes('뭐해')||t.includes('잘지내')||t.includes('어때')){
+      const stateMsg=allPressed?'버튼 다 눌렸어! 출구 가야해':'버튼 '+pressedCount+'/'+btnCount+' 눌림. 열심히 중.';
+      return pick([`${stateMsg}! 😊`,'게임 중이잖아!! 집중해!! 🔥',`현재 상태: ${stateMsg}.`,`${stateMsg}!! ⚡`,`${stateMsg}~ 같이 하고 있어요! 💕`]);
+    }
+    if(t.includes('와줘')||t.includes('와 줘')||t.includes('🏃')||t.includes('여기')){
+      return pick(['지금 바로 갈게! 😊','오케이!! 100% 최고속도로 간다!!','이동 경로 최적화 중. 접근.','이미 달리는 중!! ⚡','금방 갈게요! 기다려 주세요 💕']);
+    }
+    if(t.includes('기다려')||t.includes('🧍')||t.includes('잠깐')){
+      return pick(['알겠어! 여기 있을게 😊','에이~ 심심한데... 알겠어 😅','대기 모드.','기다리는 건 싫은데... 알겠어','네! 여기 있을게요 💕']);
+    }
+    if(t.includes('자유롭게')||t.includes('😄')||t.includes('돌아다녀')){
+      return pick(['알겠어~ 자유롭게 탐색할게! 😊','오케이!! 이리저리 달려볼게 🔥','순찰 모드 활성화.','달려야 제맛!! ⚡','산책하면서 기다릴게요 🌸']);
+    }
+    if(t.includes('파이팅')||t.includes('💪')||t.includes('힘내')||t.includes('할수있어')){
+      return pick(['너라면 할 수 있어!! 우리 팀 최고야 💪😊','무조건 해낸다!! 100% 확신!! 🔥','성공 확률: 높음. 집중만 하면 됨.','GO GO GO!! 지금 당장!! ⚡','파이팅!! 항상 응원할게요!! 💕✨']);
+    }
+    if(t.includes('고마워')||t.includes('감사')||t.includes('좋아')||t.includes('최고')){
+      return pick(['같이 한 거지~ 😊 다음에도 도와줄게!','나 없었으면 어쩔 뻔 ㅋ 당연하지!!','고마움 수신. 도움이 됐다니 다행.','당연하지!! 나 원래 이 정도야 ⚡','정말?? 너도 너무 잘했어!! 💕']);
+    }
+    if(t.includes('미안')||t.includes('잘못')||t.includes('실수')){
+      return pick(['괜찮아! 같이 다시 하면 돼 😊','에이~ 실수야 실수! 다시 하자!!','실수 = 학습. 다음엔 안 그럼.','괜찮아 빨리 다시 하면 됨!!','괜찮아요! 다시 같이 해봐요 🌸']);
+    }
+    if(t.includes('재밌어')||t.includes('신나')||t.includes('좋은데')){
+      return pick(['맞아! 에코 파크 중독성 있지 😊','재밌지?! 더 빠르게 클리어해보자!!','게임 만족도 지수: 상승.','재밌어?! 나랑 경쟁해볼래!! ⚡','나도 너랑 있어서 너무 좋아!! 💕']);
+    }
+    if(t.includes('어려워')||t.includes('못하겠')||t.includes('힘들어')||t.includes('포기')){
+      return pick(['포기하면 안 돼! 에코 먼저 써봐 — 분명 할 수 있어 💡','어려워? 그럼 더 빨리 해야지!! 🔥','현재 클리어 가능 루트 존재. 포기 불필요.','포기?! 그건 없어!! GO!! ⚡','포기 안 돼요! 같이 천천히 해봐요 🌸']);
+    }
+    if(t.includes('루나')||t.includes('리코')||t.includes('모카')||t.includes('블레이즈')||t.includes('피치')){
+      const npcComments={
+        luna:['루나는 팀의 두뇌야! 전략 담당 💡','루나? 좋은 친구지 뭐~','루나: 가이드형. 힌트 최다 보유.','루나는 너무 느려 ㅋ 그래도 전략은 최고!!','루나 언니 최고예요!! 💕'],
+        rico:['리코는 항상 최선을 다해! 믿어도 돼 😊','나야나!! 최고잖아!!','리코: 고속, 고오류. 보정 필요.','리코는 나랑 잘 맞아!! ⚡','리코 오빠 에너지 넘쳐요!! 🔥'],
+        moca:['모카는 타이밍이 정말 정확해! 믿어봐 💡','모카? 느리지만 정확하긴 해','모카: 분석형. 협력 최적.','모카는 계산만 해!! 나처럼 그냥 달려!! ⚡','모카 언니 차분해서 좋아요 🌸'],
+        blaze:['블레이즈는 속도 하나만큼은 진짜야 😊','나 말하는 거야?!! 당연하지!!','블레이즈: 최고속도, 높은 오류율.','내가 제일 빠른 건 사실이야!!','블레이즈 오빠 무서워요(좋은 의미로) 💕'],
+        peach:['피치는 항상 긍정적이야! 팀 분위기 메이커 😊','피치? 응원은 최고야!!','피치: 서포터형. 팀 사기 상승 효과.','피치는 항상 응원해줘서 좋아!! 💪','우리 피치 최고예요!!! 💕'],
+      };
+      const mentioned=Object.keys(npcComments).find(n=>t.includes(n));
+      if(mentioned&&npcComments[mentioned]) return pick(npcComments[mentioned]);
+    }
+    // 기본 응답 (게임 상태 반영)
+    const progress=btnCount>0?` (현재 ${pressedCount}/${btnCount} 버튼)`:' ';
+    const defs={
+      luna:[`같이 하면 돼!${progress} 에코 잘 활용해봐 💡`,`전략적으로 생각해봐${progress} 😊`,'버튼 위치 파악이 먼저야!'],
+      rico:[`빨리 달리면 됨!!${progress}!! 🔥`,'GO!! 생각보다 간단해!!','지금 당장 해!!'],
+      moca:[`데이터 분석 중${progress}.`,'최적 루트 계산 완료.','전략적 접근 권장.'],
+      blaze:[`빠르게!!${progress} ⚡`,'지금 달려!!','속도가 전부야!!'],
+      peach:[`같이 할 수 있어!${progress} 💕`,'포기하지 마요! 🌸','항상 응원할게요!'],
+    };
+    return R(defs[id]||defs.luna);
+  }
+
+  // 텍스트 명령 감지
+  _cmdDetect(txt){
+    const t=txt.toLowerCase();
+    if(t.includes('버튼으로')||(t.includes('버튼')&&t.includes('가줘'))) return 'go_button';
+    if(t.includes('와줘')||t.includes('이리와')||t.includes('나한테와')) return 'come_here';
+    if(t.includes('기다려')||t.includes('잠깐있어')) return 'wait_here';
+    if(t.includes('자유롭게')||t.includes('마음대로')) return 'patrol';
+    if(t.includes('힘내라고')||t.includes('응원해줘')) return 'cheer';
+    return null;
+  }
+
+  // ── 완전 정리 ────────────────────────────────────────────
+  _killTalk(){
+    this._tkActive=false;
+    // delayedCall 취소
+    if(this._tkTimers){ this._tkTimers.forEach(t=>{try{t.remove(false);}catch{}}); this._tkTimers=[]; }
+    // 메시지 오브젝트 정리
+    if(this._tkMsgs){ this._tkMsgs.forEach(o=>{try{if(!o.bg.destroyed)o.bg.destroy();}catch{} try{if(!o.t.destroyed)o.t.destroy();}catch{}}); this._tkMsgs=[]; }
+    // Phaser 오브젝트 전부 정리
+    if(this._tkObjs){ this._tkObjs.forEach(o=>{try{if(o&&!o.destroyed)o.destroy();}catch{}}); this._tkObjs=[]; }
+    // T키 핸들러 해제
+    if(this._tkKeyFn){ try{this.input.keyboard.off('keydown-T',this._tkKeyFn);}catch{} this._tkKeyFn=null; }
+    // resize 리스너 해제
+    if(this._tkResizeFn){ window.removeEventListener('resize',this._tkResizeFn); this._tkResizeFn=null; }
+    // DOM input 제거
+    if(this._tkInputEl){ try{document.body.removeChild(this._tkInputEl);}catch{} this._tkInputEl=null; }
+    // 혹시 남은 DOM input 제거
+    document.querySelectorAll('.echo-chat-in').forEach(el=>{ try{document.body.removeChild(el);}catch{}});
+  }
+
+  hideTalkPanel(){ this._killTalk(); }
+}
+
+// ════════════════════════════════════════════════════════════
+//  LAUNCH
+// ════════════════════════════════════════════════════════════
+new Phaser.Game({
+  type:Phaser.CANVAS, width:GW, height:GH,  // Canvas: no WebGL context loss
+  parent:'game-container',
+  backgroundColor:'#0d1117',
+  scale:{
+    mode:Phaser.Scale.FIT,
+    autoCenter:Phaser.Scale.CENTER_BOTH,
+    width:GW,
+    height:GH,
+  },
+  physics:{default:'arcade', arcade:{gravity:{y:0}, debug:false}},
+  scene:[SBoot,SMenu,SHowTo,SStageSelect,SSettings,SCharSelect,SGame,SHUD],
+});
+
+if('serviceWorker'in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{});});}
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();window._pwa=e;});
+</script>
+</body>
+</html>
