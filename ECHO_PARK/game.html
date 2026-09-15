@@ -8,6 +8,8 @@
 <meta name="theme-color" content="#0d1117">
 <title>에코 파크 (Echo Park)</title>
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{
@@ -425,21 +427,24 @@ const STAGES={
 
   // ── 특별 스테이지: NPC 부스트 맵 ────────────────────────
   // 높은 발판 위 버튼(ty:12) — 점프만으로는 불가, NPC 옆 [F]키 부스트 필요
-  // map 배열 인덱스: 0=GND, 1~9=R0(빈 공간), 10=높은발판, 11=빈행, 12=높은버튼행,
-  //                  13~15=R0, 16=바닥버튼+출구, 17=GND (총 18행)
+  // map 배열 인덱스: 0=GND, 1~8=R0(빈 공간), 9=높은버튼행, 10=높은발판, 11=빈행,
+  //                  12~15=R0, 16=바닥버튼+출구, 17=GND (총 18행)
+  // ※ 높은 버튼(bH0/bH1)은 발판(row10) "바로 위" row9에 있어야 함 — 바닥 버튼이
+  //   바닥(row17) 바로 위 row16에 있는 것과 같은 배치. 발판 아래(row12)에 두면
+  //   부스트로 아무리 뛰어도 발판 밑면에 막혀서 버튼에 절대 닿지 않는다(실측 확인됨).
   '1-4':{name:'NPC 사다리',world:1,stage:4,tSec:90,
     map:[
-      GND,R0,R0,R0,R0,R0,R0,R0,R0,R0,                                      // idx 0~9
+      GND,R0,R0,R0,R0,R0,R0,R0,R0,                                         // idx 0~8
+      [1,0,0,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,1],      // idx 9: 높은 버튼 (ty:9, 발판 바로 위)
       [1,0,0,0,2,2,2,2,0,0,0,0,0,0,0,0,2,2,2,2,0,0,0,0,0,0,0,0,0,1],      // idx 10: 높은 발판
       [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],      // idx 11: 빈 행
-      [1,0,0,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,1],      // idx 12: 높은 버튼 (ty:12)
-      R0,R0,R0,                                                               // idx 13~15
+      R0,R0,R0,R0,                                                            // idx 12~15
       [1,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0,4,0,0,1],      // idx 16: 바닥 버튼+출구 (ty:16)
       GND,                                                                    // idx 17
     ],
     ps:{x:5,y:16}, ns:{luna:{x:8,y:16},peach:{x:18,y:16}},
     btns:[
-      {tx:4,ty:12,id:'bH0'}, {tx:19,ty:12,id:'bH1'}, // 높은 버튼 (NPC 부스트 필요)
+      {tx:4,ty:9,id:'bH0'}, {tx:19,ty:9,id:'bH1'},  // 높은 버튼 (NPC 부스트로 발판에 올라가서 누름)
       {tx:2,ty:16,id:'b0'},  {tx:22,ty:16,id:'b1'},  // 바닥 버튼
     ],
     exits:[{tx:26,ty:16,id:'e0',req:['bH0','bH1','b0','b1']}],
@@ -769,7 +774,7 @@ class SHowTo extends Phaser.Scene{
       {title:'기본 조작',lines:['🎮  PC 이동:  ← → 또는  A D 키','   점프:  ↑  또는  W  또는  SPACE','📱  모바일:  화면 왼쪽 ← ▶,  오른쪽 ↑','','🎯  목표: 버튼을 밟아 출구를 열고 통과!','   버튼 위에 서 있으면 계속 눌린 상태','🚪  출구는 모든 버튼이 동시에 눌려야 열림']},
       {title:'에코 시스템',lines:['📹  [E] 키  →  에코 녹화 시작','   다시 [E]  →  녹화 정지 & 재생 시작','','👻  에코 = 내 과거 행동이 반복되는 잔상','   에코가 버튼 위에 있으면 계속 눌린 상태!','','📦  에코 슬롯 3개  (E1 / E2 / E3 순으로 사용)','↺  [R] 키  →  전체 리셋 (에코·버튼·위치)']},
       {title:'NPC 동료 & 대화',lines:['🟣  루나 (가이드형)  —  막히면 힌트 제공','🟢  리코 (돌격형)   —  빠르고 에너지 넘침','🟡  모카 (분석형)  —  정확한 타이밍 신호','🔴  블레이즈 (스피드)  —  가장 빠른 이동','🩷  피치 (서포터)   —  항상 응원해줌','','💬  [T] 키  →  NPC에게 말 걸기!','   버튼으로 이동 / 나한테 와 / 기다려 등']},
-      {title:'저장 & 일시정지',lines:['⏸   [ESC] 또는 [P]  →  일시 정지 메뉴','   계속하기 / 저장 / 처음부터 / 나가기','','💾  저장은 플레이어가 원할 때 직접!','   슬롯 3개 — 각기 다른 진행 상황 보관 가능','','🏠  "저장 후 나가기" — 슬롯1에 자동 저장 후 메뉴','🔓  6-15 퍼펙트 클리어 시 히든 월드 해제!']},
+      {title:'저장 & 일시정지',lines:['⏸   [ESC] 또는 [P]  →  일시 정지 메뉴','   계속하기 / 저장 / 처음부터 / 나가기','','💾  저장은 플레이어가 원할 때 직접!','   슬롯 3개 — 각기 다른 진행 상황 보관 가능','','🏠  "저장 후 나가기" — 슬롯1에 자동 저장 후 메뉴','🌟  월드를 모두 클리어하면 다음 월드가 열려요!']},
     ];
     this._draw();
     this.input.keyboard.on('keydown-RIGHT',()=>this._next());
@@ -828,14 +833,19 @@ class SStageSelect extends Phaser.Scene{
 
       // Stage tiles
       const stages=Object.entries(STAGES).filter(([,s])=>s.world===wid);
+      // 이전 월드의 스테이지를 모두 클리어해야 이번 월드의 1스테이지가 열림
+      // (수정 전에는 "stageNum===1"만 보고 무조건 열어줘서 월드1을 하나도
+      //  안 깨도 2-1로 바로 들어갈 수 있었음)
+      const prevWorldStages=Object.keys(STAGES).filter(id=>STAGES[id].world===wid-1);
+      const prevWorldCleared=prevWorldStages.length>0 && prevWorldStages.every(id=>(this.sv.stageStars[id]||0)>0);
       stages.forEach(([sid,sd],si)=>{
         const tx=wx+si*145, ty=wy+66;
         const stars=this.sv.stageStars[sid]||0;
         const cleared=stars>0;
-        // Check if unlocked: stage 1 always unlocked, others need prev cleared
+        // Check if unlocked: 월드의 1스테이지는 첫 월드이거나 이전 월드를 다 깼을 때만, 나머지는 직전 스테이지 클리어 필요
         const stageNum=sd.stage;
         const prevSid=`${wid}-${stageNum-1}`;
-        const unlocked=(stageNum===1)||(this.sv.stageStars[prevSid]>0);
+        const unlocked=stageNum===1?(wid===Math.min(...worldIds)||prevWorldCleared):(this.sv.stageStars[prevSid]>0);
 
         const tg=this.add.graphics();
         const drawTile=(hv)=>{
@@ -875,7 +885,7 @@ class SStageSelect extends Phaser.Scene{
     const w3Bar=this.add.graphics();
     w3Bar.fillStyle(0x0a0820,1);w3Bar.fillRoundedRect(50,w3y-8,GW-120,44,8);
     w3Bar.lineStyle(0.5,0x2a1a60,0.6);w3Bar.strokeRoundedRect(50,w3y-8,GW-120,44,8);
-    this.add.text(66,w3y+14,'🔒  W3  에코 우주  —  월드 2 클리어 후 해금',{
+    this.add.text(66,w3y+14,'🔒  W3  에코 우주  —  준비 중 (다음 업데이트 예정)',{
       fontSize:'13px',fontFamily:"'Nunito',sans-serif",color:'#2a1a60',fontStyle:'bold'
     });
     // 총 별점 표시
@@ -1258,7 +1268,9 @@ class SGame extends Phaser.Scene{
       if(this._docKeyFn){ document.removeEventListener('keydown',this._docKeyFn); this._docKeyFn=null; }
     });
 
-    this._mobile();
+    // 터치 기기에서만 가상 컨트롤 표시 — 데스크톱 마우스/키보드에서는
+    // 화면 하단 버튼/출구와 좌표가 겹쳐 가려지는 문제가 있어 비표시
+    if(this.sys.game.device.input.touch) this._mobile();
     // Launch HUD (parallel scene)
     this.scene.launch('HUD',{g:this});
     // Intro popup
@@ -1329,6 +1341,11 @@ class SGame extends Phaser.Scene{
         this.add.rectangle(cx,wy+4,T,8,tc2,0.95).setDepth(2);
         const b=this.gnd.create(cx,wy+4,'tile_plat');
         b.setVisible(false).refreshBody();
+        // 원웨이 플랫폼: 아래에서 부스트로 뛰어올라도 밑면에 막히지 않고
+        // 통과해서 위로 올라간 뒤, 떨어질 때는 정상적으로 위에 착지함
+        b.body.checkCollision.down=false;
+        b.body.checkCollision.left=false;
+        b.body.checkCollision.right=false;
       } else if(tile===3){
         const bd=this.sd.btns.find(b=>b.tx===rx&&b.ty===ry);
         if(bd){
@@ -2242,7 +2259,11 @@ class SHUD extends Phaser.Scene{
           if(!this._tkActive)return;
           chatLogs[selNpc.id].push({who:'npc',text:this._npcReply(selNpc.id,opt.l)});
           renderMsgs(); SND.chatMsg();
-          if(opt.c!=='help') onCmd(selNpc.id,opt.c);
+          // 답장을 읽을 시간을 준 뒤 명령 실행(+패널 닫기) — 즉시 닫으면 답장을 볼 수 없었음
+          if(opt.c!=='help'){
+            const tm2=this.time.delayedCall(1400,()=>{ if(this._tkActive) onCmd(selNpc.id,opt.c); });
+            this._tkTimers.push(tm2);
+          }
         });
         this._tkTimers.push(tm);
       });
@@ -2301,7 +2322,11 @@ class SHUD extends Phaser.Scene{
         chatLogs[selNpc.id].push({who:'npc',text:this._npcReply(selNpc.id,txt)});
         renderMsgs(); SND.chatMsg();
         const cmd=this._cmdDetect(txt);
-        if(cmd) onCmd(selNpc.id,cmd);
+        // 답장을 읽을 시간을 준 뒤 명령 실행(+패널 닫기)
+        if(cmd){
+          const tm2=this.time.delayedCall(1400,()=>{ if(this._tkActive) onCmd(selNpc.id,cmd); });
+          this._tkTimers.push(tm2);
+        }
       });
       this._tkTimers.push(tm);
     };
