@@ -118,7 +118,7 @@ echo-park/
 └── README.md
 ```
 
-`ECHO_PARK/` 폴더에는 `game.html` 외에 `sw.js`(서비스 워커), `manifest.json`, `icon-192.png`, `icon-512.png`, `echo_park_game_design.pdf`(기획서), `CLAUDE.md`(개발 보조용 메모)가 함께 있습니다.
+`ECHO_PARK/` 폴더에는 `game.html` 외에 `sw.js`(서비스 워커), `manifest.json`, `icon-192.png`, `icon-512.png`, `echo_park_game_design.pdf`(기획서)가 함께 있습니다.
 
 ---
 
