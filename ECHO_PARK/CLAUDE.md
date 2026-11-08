@@ -2,12 +2,11 @@
 
 ## 개요
 1~4인 협동 퍼즐 플랫포머 게임 (플레이어 1 + NPC 동료 최대 3명).
-Phaser 3 기반, PWA + Electron 크로스플랫폼.
+Phaser 3 기반, PWA (브라우저/모바일).
 
 ## 기술 스택
 - Phaser 3 (게임 엔진, CDN)
 - HTML/CSS/JavaScript (단일 파일)
-- Electron (데스크탑 배포)
 - PWA (브라우저/모바일)
 
 ## NPC 캐릭터 5명
